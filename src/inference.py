@@ -1,35 +1,48 @@
-import numpy as np
+import pandas as pd
 import torch
-from torch.utils.data import DataLoader
-import torch.nn as nn
-from helpers import collate_fn
 
-def predict(autoencoder, predictor, dataset, batch_size, device):
-    dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn)
-    autoencoder.eval()
-    predictor.eval()
+def get_predictions(trained_model, inference_loader, criterion, DEVICE: str, results_path: str):
+
+    test_loss, predictions_df = test_model(trained_model, inference_loader, criterion, DEVICE)
+    torch.save(trained_model.state_dict(), results_path)
+
+    return predictions_df
+
+def test_model(model, test_loader, criterion, device: str):
+
+    model.eval()  # Set the model to evaluation mode
+    test_loss = 0.0
     predictions = []
+    ground_truths = []
+    domains = []  # To store domain names if needed
 
     with torch.no_grad():
-        for variant_sequences, wildtype_sequences, fitness_values, variant_lengths, wildtype_lengths in dataloader:
-            variant_sequences = variant_sequences.to(device)
-            wildtype_sequences = wildtype_sequences.to(device) if wildtype_sequences is not None else None
-            variant_lengths = variant_lengths.cpu().to(torch.int64)
-            wildtype_lengths = wildtype_lengths.cpu().to(torch.int64) if wildtype_lengths is not None else None
+        for batch in test_loader:
+            inputs = batch['sequence_representation'].float().to(device)
+            labels = batch['fitness_value'].float().to(device)
 
-            variant_latent = autoencoder.encoder(variant_sequences, variant_lengths)
-            wildtype_latent = autoencoder.encoder(wildtype_sequences, wildtype_lengths) if wildtype_sequences is not None else None
-            combined_latent = torch.cat((variant_latent, wildtype_latent), dim=1) if wildtype_latent is not None else variant_latent
-            predicted_fitness = predictor(combined_latent)
-            predictions.append(predicted_fitness.cpu().numpy())
+            # Forward pass
+            outputs = model(inputs)
+            loss = criterion(outputs.squeeze(), labels)
+            test_loss += loss.item()
 
-    return np.concatenate(predictions).ravel()
+            # Store predictions and ground truths
+            predictions.extend(outputs.squeeze().tolist())
+            ground_truths.extend(labels.tolist())
+            domains.extend(batch['domain_name'])  # Assuming domain names are part of the batch
 
+    # Calculate the average test loss
+    avg_test_loss = test_loss / len(test_loader)
+    print(f"Test Loss: {avg_test_loss}")
 
+    # Create a pandas DataFrame with predictions and ground truth
+    results_df = pd.DataFrame({
+        'Domain': domains,
+        'Predicted Fitness': predictions,
+        'True Fitness': ground_truths
+    })
 
+    # Save the results to a CSV file
+    results_df.to_csv("results/test_results.csv", index=False)
 
-
-
-
-
-
+    return avg_test_loss, results_df

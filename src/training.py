@@ -1,70 +1,76 @@
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from helpers import collate_fn
 
-def train_autoencoder(autoencoder, dataset, epochs=10, batch_size=32, learning_rate=0.001, device='cpu'):
-    
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-    criterion_reconstruction = nn.MSELoss()
-    optimizer = torch.optim.Adam(autoencoder.parameters(), lr=learning_rate)
-    
-    autoencoder.to(device)
-    
-    for epoch in range(epochs):
-        autoencoder.train()
-        total_loss_reconstruction = 0
-        for variant_sequences, wildtype_sequences, fitness_values, variant_lengths, wildtype_lengths in dataloader:
-            variant_sequences = variant_sequences.to(device, dtype=torch.long)
-            wildtype_sequences = wildtype_sequences.to(device, dtype=torch.long) if wildtype_sequences is not None else None
-            fitness_values = fitness_values.to(device, dtype=torch.float32)
-            variant_lengths = variant_lengths.to('cpu', dtype=torch.int64)  # Ensure int64 type on CPU
-            wildtype_lengths = wildtype_lengths.to('cpu', dtype=torch.int64) if wildtype_sequences is not None else None
-            seq_len = variant_sequences.size(1)
-            optimizer.zero_grad()
-            reconstructed, _ = autoencoder(variant_sequences, variant_lengths, wildtype_sequences, wildtype_lengths if wildtype_sequences is not None else None, seq_len)
-            reconstructed = reconstructed.squeeze(-1)
-            loss_reconstruction = criterion_reconstruction(reconstructed, variant_sequences.float())
-            loss_reconstruction.backward()
-            optimizer.step()
-            total_loss_reconstruction += loss_reconstruction.item()
-        
-        avg_loss_reconstruction = total_loss_reconstruction / len(dataloader)
-        
-        print(f'Epoch [{epoch+1}/{epochs}], Reconstruction Loss: {avg_loss_reconstruction:.4f}')
+def train_fitness_finder_from_plm_embeddings_nn(model, train_loader, val_loader, criterion, optimiser, max_epochs: int = 100, patience: int = 10, device: str = "cpu"):
 
-def train_predictor(autoencoder, predictor, dataset, epochs=10, batch_size=32, learning_rate=0.001, device='cpu'):
-    
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-    criterion_prediction = nn.MSELoss()
-    optimizer = torch.optim.Adam(predictor.parameters(), lr=learning_rate)
-    
-    autoencoder.encoder.to(device)
-    predictor.to(device)
-    
-    for epoch in range(epochs):
-        predictor.train()
-        total_loss_prediction = 0
-        for variant_sequences, wildtype_sequences, fitness_values, variant_lengths, wildtype_lengths in dataloader:
-            variant_sequences = variant_sequences.to(device, dtype=torch.long)
-            wildtype_sequences = wildtype_sequences.to(device, dtype=torch.long) if wildtype_sequences is not None else None
-            fitness_values = fitness_values.to(device, dtype=torch.float32)
-            variant_lengths = variant_lengths.to('cpu', dtype=torch.int64)
-            wildtype_lengths = wildtype_lengths.to('cpu', dtype=torch.int64) if wildtype_sequences is not None else None
-            with torch.no_grad():
-                variant_latent = autoencoder.encoder(variant_sequences, variant_lengths)
-                if wildtype_sequences is not None:
-                    wildtype_latent = autoencoder.encoder(wildtype_sequences, wildtype_lengths)
-                    combined_latent = torch.cat((variant_latent, wildtype_latent), dim=1)
-                else:
-                    combined_latent = torch.cat((variant_latent, torch.zeros_like(variant_latent)), dim=1)
-            optimizer.zero_grad()
-            predicted_fitness = predictor(combined_latent)
-            loss_prediction = criterion_prediction(predicted_fitness.squeeze(), fitness_values)
-            loss_prediction.backward()
-            optimizer.step()
-            total_loss_prediction += loss_prediction.item()
-        
-        avg_loss_prediction = total_loss_prediction / len(dataloader)
-        
-        print(f'Epoch [{epoch+1}/{epochs}], Prediction Loss: {avg_loss_prediction:.4f}')
+    model.to(device)
+
+    best_val_loss = float('inf')
+    epochs_without_improvement = 0
+    best_model = None
+
+    for epoch in range(max_epochs):
+
+        # Training phase
+        model.train()
+        running_loss = 0.0
+
+        for batch in train_loader:
+
+            inputs = batch['sequence_representation'].float().to(device)  # The 320-length vector embeddings
+            fitness_values = batch['fitness_value'].float().to(device)   # The target fitness values
+
+            # Zero the parameter gradients
+            optimiser.zero_grad()
+
+            # Forward pass
+            outputs = model(inputs)
+            loss = criterion(outputs.squeeze(), fitness_values)
+
+            # Backward pass and optimization
+            loss.backward()
+            optimiser.step()
+            running_loss += loss.item()
+
+        # Log training loss
+        if (epoch + 1) % 1 == 0: print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {running_loss / len(train_loader)}")
+
+        # Validation phase
+        model.eval()
+        val_loss = 0.0
+
+        with torch.no_grad():
+
+            for batch in val_loader:
+
+                inputs = batch['sequence_representation'].float().to(device)
+                fitness_values = batch['fitness_value'].float().to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs.squeeze(), fitness_values)
+                val_loss += loss.item()
+
+        # Log validation loss
+        if (epoch + 1) % 1 == 0: print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {val_loss / len(val_loader)}")
+
+        # Early stopping check
+        avg_val_loss = val_loss / len(val_loader)
+
+        if avg_val_loss < best_val_loss:
+
+            best_val_loss = avg_val_loss
+            epochs_without_improvement = 0
+            best_model = model.state_dict()  # Save the best model
+
+        else:
+
+            epochs_without_improvement += 1
+
+        if epochs_without_improvement >= patience:
+
+            print(f"Early stopping triggered after {epoch + 1} epochs")
+            break
+
+    if best_model is not None:
+
+            model.load_state_dict(best_model)
+
+    return model
