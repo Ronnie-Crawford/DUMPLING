@@ -9,13 +9,27 @@ from datasets import ProteinDataset
 
 def setup_esm(device, model_selections):
 
-    #model, alphabet = esm.pretrained.esm1_t6_43M_UR50S()
-    #model, alphabet = esm.pretrained.esm1_t12_85M_UR50S()
-    #model, alphabet = esm.pretrained.esm1_t34_670M_UR100()
-    #model, alphabet = esm.pretrained.esm1_t34_670M_UR50D()
-    #model, alphabet = esm.pretrained.esm1_t34_670M_UR50S()
+    if "ESM1_T6_43M_UR50S" in model_selections:
+        
+        model, alphabet = esm.pretrained.esm1_t6_43M_UR50S()
+        
+    elif "ESM1_T12_85M_UR50S" in model_selections:
+        
+        model, alphabet = esm.pretrained.esm1_t12_85M_UR50S()
+        
+    elif "ESM1_T34_670M_UR100" in model_selections:
+        
+        model, alphabet = esm.pretrained.esm1_t34_670M_UR100()
+        
+    elif "ESM1_T34_670M_UR50D" in model_selections:
+        
+        model, alphabet = esm.pretrained.esm1_t34_670M_UR50D()
+        
+    elif "ESM1_T34_670M_UR50S" in model_selections:
+        
+        model, alphabet = esm.pretrained.esm1_t34_670M_UR50S()
 
-    if "ESM2_T6_8M_UR50D" in model_selections:
+    elif "ESM2_T6_8M_UR50D" in model_selections:
 
         model, alphabet = esm.pretrained.esm2_t6_8M_UR50D()
 
@@ -26,10 +40,19 @@ def setup_esm(device, model_selections):
     elif "ESM2_T30_150M_UR50D" in model_selections:
 
         model, alphabet = esm.pretrained.esm2_t30_150M_UR50D()
-    #model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
-    #model, alphabet = esm.pretrained.esm2_t36_3B_UR50D()
-    #model, alphabet = esm.pretrained.esm2_t48_15B_UR50D()
-    #model, alphabet = esm.pretrained.esm1v_t33_650M_UR90S_5() # Does not work with current architecture
+        
+    elif "ESM2_T33_650M_UR50D" in model_selections:
+    
+        model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+        
+    elif "ESM2_T36_3B_UR50D" in model_selections:
+        
+        model, alphabet = esm.pretrained.esm2_t36_3B_UR50D()
+        
+    elif "ESM2_T48_15B_UR50D" in model_selections:
+    
+        model, alphabet = esm.pretrained.esm2_t48_15B_UR50D()
+
     batch_converter = alphabet.get_batch_converter()
     model = model.to(device)
     model.eval()

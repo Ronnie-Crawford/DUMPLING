@@ -7,6 +7,10 @@ Currently 2 architectures have been tried:
 - An RNN autoencoder to represent a sequence, with a downstream fitness predictor.
 - ESM2 embeddings with downstream stability prediction module.
 
+## Environment
+
+You can set up the environment for this package using conda using the command: '''conda env create -f environment.yml'''.
+
 ## Usage
 
 1. Prepare your dataset and update the `config.py` file with the correct paths and parameters. Ensure you add your dataset to the ```DATASETS``` dictionary.
@@ -22,9 +26,10 @@ All configurations such as data paths, model parameters, and training parameters
 
 ## Flags
 
-- --device  - Can overide automatic device specification, to run package on ```CPU```, ```MPS``` or ```CUDA```.
-- --splits  - Choose how to split data; ```homologous-aware``` to ensure homologous domains are in the same split (requires domain family file), or ```random``` for entirely random assigning.
-- --tune    - Choose whether to tune hyperparameters; if blank, hyperparameters in the config will be used, ```grid-search``` iterates over every possible value within config ranges, ```random-search``` searches random values within config ranges.
+- ```--device```  - Can overide automatic device specification, to run package on ```CPU```, ```MPS``` or ```CUDA```.
+- ```--splits```  - Choose how to split data; ```homologous-aware``` to ensure homologous domains are in the same split (requires domain family file), or ```random``` for entirely random assigning.
+- ```--tune```    - Choose whether to tune hyperparameters; if blank, hyperparameters in the config will be used, ```grid-search``` iterates over every possible value within config ranges, ```random-search``` searches random values within config ranges.
+So for example, ```python src --splits homologous-aware --tune random-search``` would run with the automatically determined best-available device, the data would be split ensuring homologous domains are in the same splits, and the optimum hyperparameters would be searched for randomly.
 
 ## Modules
 

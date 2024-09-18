@@ -1,3 +1,4 @@
+# Third-party modules
 import torch
 
 def train_fitness_finder_from_plm_embeddings_nn(model, train_loader, val_loader, criterion, optimiser, max_epochs: int = 100, patience: int = 10, device: str = "cpu"):
