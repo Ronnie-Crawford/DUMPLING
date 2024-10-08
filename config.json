@@ -3,13 +3,13 @@
       "PLM_STABILITY_MODULES": {
         "ESM2_T6_8M_UR50D": false,
         "ESM2_T12_35M_UR50D": false,
-        "ESM2_T30_150M_UR50D": true,
+        "ESM2_T30_150M_UR50D": false,
         "ESM2_T33_650M_UR50D": false,
-        "ESM2_T36_3B_UR50D": false,
+        "ESM2_T36_3B_UR50D": true,
         "ESM2_T48_15B_UR50D": false
       }
     },
-    "DATASETS_IN_USE": ["ROCKLIN"],
+    "DATASETS_IN_USE": ["MAGDA"],
     "DATASETS" : {
         "MAGDA" : {
             "PATH" : "data/magda/data_main_magda.csv",
@@ -34,12 +34,12 @@
             "DROP_DOMAIN_NAME_EXTENSION": null
         },
         "ROCKLIN" : {
-            "PATH" : "data/rocklin/data_main_rocklin.csv",
+            "PATH" : "data/rocklin/data_with_fitness_rocklin.csv",
             "HOMOLOGOUS_FAMILIES_PATH": "homology/domain_families_rocklin.tsv",
             "DOMAIN_NAME_COLUMN" : "name",
             "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
-            "ENERGY_COLUMN": "",
-            "FITNESS_COLUMN" : "ddG_ML",
+            "ENERGY_COLUMN": "ddG_ML",
+            "FITNESS_COLUMN" : "fitness",
             "IS_ENERGY_REVERSED": false,
             "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": "."
@@ -49,8 +49,8 @@
             "HOMOLOGOUS_FAMILIES_PATH": "",
             "DOMAIN_NAME_COLUMN" : "",
             "VARIANT_AA_SEQ_COLUMN" : "",
-            "ENERGY_COLUMN": "",
-            "FITNESS_COLUMN" : "ddG",
+            "ENERGY_COLUMN": "ddG",
+            "FITNESS_COLUMN" : "",
             "IS_ENERGY_REVERSED": false,
             "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": null
@@ -77,7 +77,7 @@
         "DROPOUT_LAYERS": [0, 0, 0, 0, 0]
     },
     "TRAINING_PARAMETERS": {
-        "BATCH_SIZE": 512,
+        "BATCH_SIZE": 16,
         "LEARNING_RATE": 0.001,
         "MAX_EPOCHS": 100,
         "PATIENCE": 3,

@@ -6,7 +6,7 @@ import torch
 # Local modules
 from config_loader import config
 from models import set_up_model
-from training import train_fitness_finder_from_plm_embeddings_nn
+from training import train_fitness_finder_from_plm_embeddings_nn, train_energy_and_fitness_finder_from_plm_embeddings_nn
 from inference import get_predictions
 from helpers import compute_metrics
 
@@ -117,10 +117,10 @@ def random_search(DEVICE: str, training_loader, validation_loader, testing_loade
     for hidden_layers, dropout_layers in zip(hidden_layer_arrays, dropout_layer_arrays):
 
         model, criterion, optimiser = set_up_model(embedding_size, hidden_layers, dropout_layers)
-        trained_model = train_fitness_finder_from_plm_embeddings_nn(model, training_loader, validation_loader, criterion, optimiser, config["TRAINING_PARAMETERS"]["MAX_EPOCHS"], config["TRAINING_PARAMETERS"]["PATIENCE"], DEVICE)
+        trained_model = train_energy_and_fitness_finder_from_plm_embeddings_nn(model, training_loader, validation_loader, criterion, optimiser, config["TRAINING_PARAMETERS"]["MAX_EPOCHS"], config["TRAINING_PARAMETERS"]["PATIENCE"], DEVICE)
 
         predictions_df = get_predictions(trained_model, testing_loader, criterion, DEVICE, "models/plm_embedding_to_simple_nn")
-        yield hidden_layers, dropout_layers, compute_metrics("results/test_results.csv")
+        yield hidden_layers, dropout_layers, compute_metrics("results/test_results.csv", "fitness")
 
 def gradient_descent(DEVICE: str, training_loader, validation_loader, testing_loader, embedding_size: int):
 

@@ -2,10 +2,50 @@
 import torch
 from torch.utils.data import DataLoader
 import esm
+import amplify
+import hydra
 
 # Local modules
 from config_loader import config
+from preprocessing import pad_variable_length_sequences
 from datasets import ProteinDataset
+
+# Load AMPLIFY conf via hydra
+#@hydra.main(config_path="/Users/rc30/Documents/projects/ids_project/AMPLIFY/conf/", config_name="config.yaml", version_base="1.3")
+
+def load_embeddings(datasets, embeddings, model_selections, DEVICE, datasets_in_use = config["DATASETS_IN_USE"]):
+
+    if embeddings == "new" and any(model_selections):
+
+        model, alphabet, batch_converter, embedding_size, n_layers = setup_esm(DEVICE, model_selections)
+        
+        for dataset, dataset_name in zip(datasets, config["DATASETS_IN_USE"]):
+
+            dataset.variant_aa_seqs = pad_variable_length_sequences(dataset.variant_aa_seqs)
+            fetch_esm_embeddings_batched(dataset, model, alphabet, batch_converter, n_layers, DEVICE, config["TRAINING_PARAMETERS"]["BATCH_SIZE"])
+            torch.save({"dataset": dataset, "embedding_size": embedding_size}, f"./embeddings/{dataset_name}_{model_selections}.dataset")
+    
+    elif embeddings != "new" and any(model_selections):
+        
+        datasets = []
+        
+        for dataset_name in config["DATASETS_IN_USE"]:
+            loaded = torch.load(f"./embeddings/{dataset_name}_{model_selections}.dataset")
+            dataset = loaded["dataset"]
+            embedding_size = loaded["embedding_size"]
+            datasets.append(dataset)
+    
+    return datasets, embedding_size
+
+def setup_amplify():
+    
+    print("Setting up amplify")
+    config_path = "/Users/rc30/Documents/projects/ids_project/AMPLIFY/conf/config.yaml"
+    checkpoint_file = "/Users/rc30/Downloads/AMPLIFY_350M/pytorch_model.pt"
+    
+    model, tokenizer = amplify.AMPLIFY.load(checkpoint_file, config_path)
+    print("Amplify set up")
+
 
 def setup_esm(device, model_selections):
 

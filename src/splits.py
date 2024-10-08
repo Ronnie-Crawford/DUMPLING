@@ -1,10 +1,28 @@
 # Third-party modules
 import numpy as np
 import pandas as pd
-from torch.utils.data import Subset, ConcatDataset
+from torch.utils.data import Subset, ConcatDataset, random_split
 
 # Local modules
 from config_loader import config
+
+def handle_splits_flag(splits, datasets):
+    
+    if splits == "homologous-aware":
+
+        training_split, validation_split, testing_split = get_splits(datasets)
+        
+        return training_split, validation_split, testing_split
+
+    elif (splits == "random") or (splits == None):
+
+        training_split, validation_split, testing_split = random_split(datasets[0], [config["SPLITS"]["TRAINING_SIZE"], config["SPLITS"]["VALIDATION_SIZE"], config["SPLITS"]["TESTING_SIZE"]])
+
+        return training_split, validation_split, testing_split
+
+    else:
+        
+        print("Value for --splits flag not recognised.")
 
 def get_splits(datasets):
 

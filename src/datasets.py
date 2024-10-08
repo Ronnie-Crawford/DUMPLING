@@ -7,11 +7,11 @@ from torch.utils.data import Dataset
 
 # Local modules
 from config_loader import config
-from helpers import truncate_domain, is_valid_sequence, is_floatable
+from helpers import truncate_domain, is_valid_sequence, is_tensor_ready
 
 class ProteinDataset(Dataset):
 
-    def __init__(self, path: str, domain_name_column: str, aa_seq_column: str, fitness_column: str, domain_name_splitter: str):
+    def __init__(self, path: str, domain_name_column: str, aa_seq_column: str, energy_column: str, fitness_column: str, domain_name_splitter: str):
 
         """
         Set up PyTorch dataset by reading in
@@ -36,27 +36,55 @@ class ProteinDataset(Dataset):
 
                 reader = csv.DictReader(data_file, delimiter = delimiter)
                 rows = list(reader)
+                
+                # If no energy or fitness column given, mask out their values as unknown
+                if energy_column == "":
+                    
+                    for row in rows:
+                        
+                        row["energy_values"] = False
+                        
+                    energy_column = "energy_values"
+                    
+                if fitness_column == "":
+                    
+                    for row in rows:
+                        
+                        row["fitness_values"] = False
+                        
+                    fitness_column = "fitness_values"
+                
+                # Also mask out any values in given columns that are not parsable
+                for row in rows:
+                    
+                    if is_tensor_ready(row[energy_column]):
+                        
+                        row["energy_mask"] = True
 
-                if domain_name_splitter == None:
+                    else:
 
-                    self.domain_names, self.variant_aa_seqs, self.fitness_values = zip(*((
-                        #truncate_domain(str(row[domain_name_column])),
-                        str(row[domain_name_column]),
-                        str(row[aa_seq_column]),
-                        float(row[fitness_column])
-                    ) for row in rows if is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"])) and is_floatable(row[fitness_column])))
+                        row[energy_column] = 0.0
+                        row["energy_mask"] = False
+                    
+                    if is_tensor_ready(row[fitness_column]):
+                        
+                        row["fitness_mask"] = True
 
-                else:
+                    else:
 
-                    self.domain_names, self.variant_aa_seqs, self.fitness_values = zip(*((
-                        truncate_domain(str(row[domain_name_column]), domain_name_splitter),
-                        str(row[aa_seq_column]),
-                        float(row[fitness_column])
-                    ) for row in rows if is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"])) and is_floatable(row[fitness_column])))
+                        row[fitness_column] = 0.0
+                        row["fitness_mask"] = False
 
+                self.domain_names, self.variant_aa_seqs, self.energy_values, self.fitness_values, self.energy_mask, self.fitness_mask = zip(*((
+                    truncate_domain(str(row[domain_name_column]), domain_name_splitter),
+                    str(row[aa_seq_column]),
+                    float(row[energy_column]),
+                    float(row[fitness_column]),
+                    bool(row["energy_mask"]),
+                    bool(row["fitness_mask"])
+                ) for row in rows if is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"])) and is_tensor_ready(float(row[energy_column])) and is_tensor_ready(float(row[fitness_column]))))
 
-                #self.sequence_representations = [None] * len(self.domain_names)
-                self.sequence_representations = [torch.zeros(1280) for _ in range(len(self.domain_names))]
+                self.sequence_representations = [torch.zeros(0) for _ in range(len(self.domain_names))]
 
             print(f"Initialised dataset of length {len(self)}")
 
@@ -72,13 +100,19 @@ class ProteinDataset(Dataset):
 
         domain_name = self.domain_names[index]
         variant_aa_seq = self.variant_aa_seqs[index].replace("*", "<unk>")
+        energy_value = self.energy_values[index]
         fitness_value = self.fitness_values[index]
+        energy_mask = self.energy_mask[index]
+        fitness_mask = self.fitness_mask[index]
         sequence_representation = self.sequence_representations[index]
 
         variant = {
             "domain_name": domain_name,
             "variant_aa_seq": variant_aa_seq,
+            "energy_value": energy_value,
             "fitness_value": fitness_value,
+            "energy_mask": energy_mask,
+            "fitness_mask": fitness_mask,
             "sequence_representation": sequence_representation
         }
 
@@ -103,6 +137,7 @@ def get_datasets():
                     config["DATASETS"][dataset_name]["PATH"],
                     config["DATASETS"][dataset_name]["DOMAIN_NAME_COLUMN"],
                     config["DATASETS"][dataset_name]["VARIANT_AA_SEQ_COLUMN"],
+                    config["DATASETS"][dataset_name]["ENERGY_COLUMN"],
                     config["DATASETS"][dataset_name]["FITNESS_COLUMN"],
                     config["DATASETS"][dataset_name]["DROP_DOMAIN_NAME_EXTENSION"]
                 )
