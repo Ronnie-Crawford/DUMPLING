@@ -1,30 +1,45 @@
 # Third-party modules
 import numpy as np
 import pandas as pd
+import torch
+from torch.utils.data import Dataset
 from torch.utils.data import Subset, ConcatDataset, random_split
 
 # Local modules
 from config_loader import config
 
-def handle_splits_flag(splits, datasets):
-    
+def handle_splits_flag(splits: str, datasets: list) -> tuple[dict, dict, dict]:
+
+    """
+    Decides how to split data based on the value passed via the splits flag.
+
+    Parameters:
+        - splits (str): The value of the splits flag, valid values are [homologous-aware] or [random].
+        - datasets (list): A list of the datasets for which splits will be assigned.
+
+    Returns:
+        - training_split (dict): A dictionary containing the domain families assigned to the training split.
+        - validation_split (dict): A dictionary containing the domain families assigned to the validation split.
+        - testing_split (dict): A dictionary containing the domain families assigned to the testing split.
+    """
+
+    training_split, validation_split, testing_split = {}, {}, {}
+
     if splits == "homologous-aware":
 
         training_split, validation_split, testing_split = get_splits(datasets)
-        
-        return training_split, validation_split, testing_split
 
     elif (splits == "random") or (splits == None):
 
         training_split, validation_split, testing_split = random_split(datasets[0], [config["SPLITS"]["TRAINING_SIZE"], config["SPLITS"]["VALIDATION_SIZE"], config["SPLITS"]["TESTING_SIZE"]])
 
-        return training_split, validation_split, testing_split
-
     else:
-        
-        print("Value for --splits flag not recognised.")
 
-def get_splits(datasets):
+        raise Exception("Value for splits flag not recognised.")
+
+    return training_split, validation_split, testing_split
+
+def get_splits(datasets: list) -> tuple[Dataset, Dataset, Dataset]:
 
     combined_training_splits = []
     combined_validation_splits = []
@@ -34,7 +49,6 @@ def get_splits(datasets):
 
         homology_family_dict = read_homology_file(config["DATASETS"][dataset_name]["HOMOLOGOUS_FAMILIES_PATH"])
         splits_dict = assign_splits(datasets[index], homology_family_dict)
-        print(splits_dict)
         splits = subset_dataset(datasets[index], splits_dict)
 
         combined_training_splits.append(splits["training_split"])
@@ -53,10 +67,10 @@ def read_homology_file(homology_file: str) -> dict:
     Reads the homology file and assigns domains to a dictionary of domain families.
 
     Parameters:
-        homology_file (str): Path to the homology file.
+        - homology_file (str): Path to the homology file.
 
     Returns:
-        family_dict (dict): Dictionary mapping domains to their domain families.
+        - family_dict (dict): Dictionary mapping domains to their domain families.
     """
 
     homology_df = pd.read_csv(homology_file, sep="\t")
@@ -72,7 +86,7 @@ def read_homology_file(homology_file: str) -> dict:
 
     return family_dict
 
-def assign_splits(dataset, family_dict: dict, random_state = config["TRAINING_PARAMETERS"]["RANDOM_STATE"]):
+def assign_splits(dataset: Dataset, family_dict: dict, random_state: int = config["TRAINING_PARAMETERS"]["RANDOM_STATE"]) -> dict:
 
     """
     Assigns domains to splits while ensuring homologous domains are in the same split.
@@ -84,7 +98,9 @@ def assign_splits(dataset, family_dict: dict, random_state = config["TRAINING_PA
         - random_state (int): Seed for the randomness.
 
     Returns:
-        train_domains (list), val_domains (list), test_domains (list): Lists of domains for training, validation, and testing sets.
+        - train_domains (list): Lists of domains for training.
+        - val_domains (list): Lists of domains for validation.
+        - test_domains (list): Lists of domains for testing.
     """
 
     all_families = list(family_dict.keys())
@@ -99,21 +115,12 @@ def assign_splits(dataset, family_dict: dict, random_state = config["TRAINING_PA
     n_train_variants = int(n_total_variants * config["SPLITS"]["TRAINING_SIZE"])
     n_val_variants = int(n_total_variants * config["SPLITS"]["VALIDATION_SIZE"])
     n_test_variants = n_total_variants - (n_train_variants + n_val_variants)
-    print("Unique domain names: ", dataset.domain_names)
-    print("Total variants: ", n_total_variants)
-    print("Train_variants: ", n_train_variants)
-    print("Val variants: ", n_val_variants)
-    print("Test variants: ", n_test_variants)
 
     current_train_size = 0
     current_val_size = 0
     current_test_size = 0
 
     # Ensure each split has at least one domain family assigned
-    # This requires more than 3 domain families, unlikely there will be less but add contingency later
-    # Train domains:  ['CSPB-CSD', 'CSPA-CSD', 'FBP11-FF1', 'BL17-NTL9', 'PSD95-PDZ3', 'CKS1']
-    # Val domains:  ['CI2A-PIN1']
-    # Test domains:  ['VIL1-HP', 'GRB2-SH3']
     family = all_families[0]
     family_domains = family_dict[family]
     family_mask = [domain in family_domains for domain in list(dataset.domain_names)]
@@ -121,7 +128,6 @@ def assign_splits(dataset, family_dict: dict, random_state = config["TRAINING_PA
     family_size = len(family_variants)
     train_domains.extend(family_domains)
     current_train_size += family_size
-    print("Adding initial family to training split: ", family, " of size", family_size, " to make current train size: ", current_train_size)
 
     family = all_families[1]
     family_domains = family_dict[family]
@@ -130,7 +136,6 @@ def assign_splits(dataset, family_dict: dict, random_state = config["TRAINING_PA
     family_size = len(family_variants)
     val_domains.extend(family_domains)
     current_val_size += family_size
-    print("Adding initial family to val split: ", family, " of size", family_size, " to make current val size: ", current_val_size)
 
     family = all_families[2]
     family_domains = family_dict[family]
@@ -139,7 +144,6 @@ def assign_splits(dataset, family_dict: dict, random_state = config["TRAINING_PA
     family_size = len(family_variants)
     test_domains.extend(family_domains)
     current_test_size += family_size
-    print("Adding initial family to testing split: ", family, " of size", family_size, " to make current test size: ", current_test_size)
 
     splits_dict = {}
 
@@ -154,25 +158,22 @@ def assign_splits(dataset, family_dict: dict, random_state = config["TRAINING_PA
 
             train_domains.extend(family_domains)
             current_train_size += family_size
-            print("Adding initial family to training split: ", family, " of size", family_size, " to make current train size: ", current_train_size)
 
         elif current_val_size + family_size <= n_val_variants:
 
             val_domains.extend(family_domains)
             current_val_size += family_size
-            print("Adding initial family to val split: ", family, " of size", family_size, " to make current val size: ", current_val_size)
 
         else:
 
             test_domains.extend(family_domains)
             current_test_size += family_size
-            print("Adding initial family to testing split: ", family, " of size", family_size, " to make current test size: ", current_test_size)
 
         splits_dict = {"train" : train_domains, "validation" : val_domains, "test" : test_domains}
 
     return splits_dict
 
-def subset_dataset(dataset, splits_dict):
+def subset_dataset(dataset: Dataset, splits_dict: dict) -> dict:
 
     train_indices = []
     validation_indices = []

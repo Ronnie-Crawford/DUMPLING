@@ -1,8 +1,9 @@
 # Third-party modules
 import torch
+from torch.utils.data import DataLoader
 
-def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader, val_loader, criterion, optimiser, max_epochs: int = 100, patience: int = 10, device: str = "cpu"):
-    
+def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader: DataLoader, val_loader: DataLoader, criterion, optimiser, max_epochs: int = 100, patience: int = 10, device: str = "cpu"):
+
     model.to(device)
 
     best_energy_val_loss = float('inf')
@@ -13,43 +14,36 @@ def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader, 
 
     for epoch in range(max_epochs):
 
-        # Training phase
         model.train()
         running_loss = 0.0
 
         for batch in train_loader:
-            
+
             inputs = batch["sequence_representation"].float().to(device)
-            #print(f"Input shape: {inputs.shape}")
             energy_values = batch["energy_value"].float().to(device)
             fitness_values = batch["fitness_value"].float().to(device)
-            
+
             energy_mask = batch["energy_mask"].bool().to(device)
             fitness_mask = batch["fitness_mask"].bool().to(device)
 
-            # Zero the parameter gradients
             optimiser.zero_grad()
-
-            # Forward pass
             outputs = model(inputs)
-            
+
             energy_predictions = outputs[:, 0].squeeze()
             fitness_predictions = outputs[:, 1].squeeze()
-            
+
             energy_loss = 0
             fitness_loss = 0
-            
-            if energy_predictions.masked_select(energy_mask).nelement() > 0:
-                
-                energy_loss = criterion(energy_predictions.masked_select(energy_mask), energy_values.masked_select(energy_mask))
-                
-            if fitness_predictions.masked_select(fitness_mask).nelement() > 0:
-                
-                fitness_loss = criterion(fitness_predictions.masked_select(fitness_mask), fitness_values.masked_select(fitness_mask))
-                
-            loss = energy_loss + fitness_loss
 
-            # Backward pass and optimization
+            if energy_predictions.masked_select(energy_mask).nelement() > 0:
+
+                energy_loss = criterion(energy_predictions.masked_select(energy_mask), energy_values.masked_select(energy_mask))
+
+            if fitness_predictions.masked_select(fitness_mask).nelement() > 0:
+
+                fitness_loss = criterion(fitness_predictions.masked_select(fitness_mask), fitness_values.masked_select(fitness_mask))
+
+            loss = energy_loss + fitness_loss
             loss.backward()
             optimiser.step()
             running_loss += loss.item()
@@ -68,26 +62,26 @@ def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader, 
                 inputs = batch['sequence_representation'].float().to(device)
                 energy_values = batch["energy_value"].float().to(device)
                 fitness_values = batch['fitness_value'].float().to(device)
-                
+
                 energy_mask = batch["energy_mask"].bool().to(device)
                 fitness_mask = batch["fitness_mask"].bool().to(device)
-                
+
                 outputs = model(inputs)
-                
+
                 energy_predictions = outputs[:, 0].squeeze()
                 fitness_predictions = outputs[:, 1].squeeze()
-                
+
                 energy_loss = 0
                 fitness_loss = 0
-                
+
                 if energy_predictions.masked_select(energy_mask).nelement() > 0:
-                
+
                     energy_loss = criterion(energy_predictions.masked_select(energy_mask), energy_values.masked_select(energy_mask))
-                    
+
                 if fitness_predictions.masked_select(fitness_mask).nelement() > 0:
-                    
+
                     fitness_loss = criterion(fitness_predictions.masked_select(fitness_mask), fitness_values.masked_select(fitness_mask))
-                
+
                 loss = energy_loss + fitness_loss
                 val_loss += loss.item()
 
@@ -118,7 +112,7 @@ def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader, 
 
     return model
 
-def train_fitness_finder_from_plm_embeddings_nn(model, train_loader, val_loader, criterion, optimiser, max_epochs: int = 100, patience: int = 10, device: str = "cpu"):
+def train_fitness_finder_from_plm_embeddings_nn(model, train_loader: DataLoader, val_loader: DataLoader, criterion, optimiser, max_epochs: int = 100, patience: int = 10, device: str = "cpu"):
 
     model.to(device)
 

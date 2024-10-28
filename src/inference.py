@@ -5,6 +5,9 @@ import math
 import pandas as pd
 import torch
 
+# Local modules
+from config_loader import config
+
 def get_predictions(trained_model, inference_loader, criterion, DEVICE: str, results_path: str):
 
     test_loss, predictions_df = test_model(trained_model, inference_loader, criterion, DEVICE)
@@ -37,8 +40,15 @@ def test_model(model, test_loader, criterion, device: str):
 
             outputs = model(inputs)
 
-            energy_predictions = outputs[:, 0].squeeze()
-            fitness_predictions = outputs[:, 1].squeeze()
+            if config["TRAINING_PARAMETERS"]["BATCH_SIZE"] > 1:
+                
+                energy_predictions = outputs[:, 0].squeeze()
+                fitness_predictions = outputs[:, 1].squeeze()
+                
+            else:
+                
+                energy_predictions = outputs[:, 0]
+                fitness_predictions = outputs[:, 1]
             
             energy_loss = 0
             fitness_loss = 0

@@ -1,14 +1,19 @@
 {
-    "MODELS" : {
-      "PLM_STABILITY_MODULES": {
-        "ESM2_T6_8M_UR50D": false,
-        "ESM2_T12_35M_UR50D": false,
-        "ESM2_T30_150M_UR50D": false,
-        "ESM2_T33_650M_UR50D": false,
-        "ESM2_T36_3B_UR50D": true,
-        "ESM2_T48_15B_UR50D": false
-      }
+    "EMBEDDING_MODELS" : {
+      "ESM2_T6_8M_UR50D": false,
+      "ESM2_T12_35M_UR50D": false,
+      "ESM2_T30_150M_UR50D": false,
+      "ESM2_T33_650M_UR50D": false,
+      "ESM2_T36_3B_UR50D": false,
+      "ESM2_T48_15B_UR50D": false,
+      "AMPLIFY_120M": false,
+      "AMPLIFY_120M_base": false,
+      "AMPLIFY_350M": true,
+      "AMPLIFY_350M_base": false
     },
+    "EMBEDDING_LAYERS": [-1],
+    "EMBEDDING_TYPES": ["MEAN"],
+    "NORMALISE_EMBEDDINGS": false,
     "DATASETS_IN_USE": ["MAGDA"],
     "DATASETS" : {
         "MAGDA" : {
@@ -73,23 +78,23 @@
         "TESTING_SIZE": 0.1
     },
     "MODEL_ARCHITECTURE": {
-        "HIDDEN_LAYERS": [256, 128, 64, 32, 16],
-        "DROPOUT_LAYERS": [0, 0, 0, 0, 0]
+        "HIDDEN_LAYERS": [1023, 511, 255, 127, 63, 31, 15],
+        "DROPOUT_LAYERS": [0, 0, 0, 0, 0, 0, 0, 0]
     },
     "TRAINING_PARAMETERS": {
-        "BATCH_SIZE": 16,
+        "BATCH_SIZE": 128,
         "LEARNING_RATE": 0.001,
-        "MAX_EPOCHS": 100,
-        "PATIENCE": 3,
+        "MAX_EPOCHS": 500,
+        "PATIENCE": 10,
         "RANDOM_STATE": 1
     },
     "HYPERPARAMETER_TUNING": {
         "SEARCH_ITERATIONS": 1000,
         "MIN_HIDDEN_LAYERS": 1,
         "MAX_HIDDEN_LAYERS": 16,
-        "MIN_HIDDEN_LAYER_SIZE": 2,
-        "MAX_HIDDEN_LAYER_SIZE": 700,
+        "MIN_HIDDEN_LAYER_SIZE": 3,
+        "MAX_HIDDEN_LAYER_SIZE": 1000,
         "MIN_DROPOUT": 0.0,
-        "MAX_DROPOUT": 0.6
+        "MAX_DROPOUT": 0.5
     }
 }

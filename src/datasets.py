@@ -20,7 +20,9 @@ class ProteinDataset(Dataset):
             - path (str): Path to the csv/tsv file containing the dataset.
             - domain_name_column (str): The name of the column which contains the unique domain identifiers for each domain.
             - aa_seq_column (str): The name of the column which contains the unique amino acid sequences for each variant.
-            - fitness_column (str): The name of the column which contains the fitness of energy measurement for each variant.
+            - energy_column (str): The name of the column which contains the energy measurement for each variant.
+            - fitness_column (str): The name of the column which contains the fitness measurement for each variant.
+            - domain_name_splitter (str): The substring which can be used to remove the suffix of the values in the domain name column.
         """
 
         try:
@@ -36,44 +38,50 @@ class ProteinDataset(Dataset):
 
                 reader = csv.DictReader(data_file, delimiter = delimiter)
                 rows = list(reader)
-                
+
                 # If no energy or fitness column given, mask out their values as unknown
                 if energy_column == "":
-                    
+
                     for row in rows:
-                        
+
                         row["energy_values"] = False
-                        
+
                     energy_column = "energy_values"
-                    
+
                 if fitness_column == "":
-                    
+
                     for row in rows:
-                        
+
                         row["fitness_values"] = False
-                        
+
                     fitness_column = "fitness_values"
-                
+
                 # Also mask out any values in given columns that are not parsable
                 for row in rows:
-                    
+
                     if is_tensor_ready(row[energy_column]):
-                        
+
                         row["energy_mask"] = True
 
                     else:
 
                         row[energy_column] = 0.0
                         row["energy_mask"] = False
-                    
+
                     if is_tensor_ready(row[fitness_column]):
-                        
+
                         row["fitness_mask"] = True
 
                     else:
 
                         row[fitness_column] = 0.0
                         row["fitness_mask"] = False
+
+                filtered_rows = [
+                    row for row in rows
+                    if (bool(row["energy_mask"]) or bool(row["fitness_mask"]))
+                    and is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"]))
+                ]
 
                 self.domain_names, self.variant_aa_seqs, self.energy_values, self.fitness_values, self.energy_mask, self.fitness_mask = zip(*((
                     truncate_domain(str(row[domain_name_column]), domain_name_splitter),
@@ -82,7 +90,7 @@ class ProteinDataset(Dataset):
                     float(row[fitness_column]),
                     bool(row["energy_mask"]),
                     bool(row["fitness_mask"])
-                ) for row in rows if is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"])) and is_tensor_ready(float(row[energy_column])) and is_tensor_ready(float(row[fitness_column]))))
+                ) for row in filtered_rows if is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"])) and is_tensor_ready(float(row[energy_column])) and is_tensor_ready(float(row[fitness_column]))))
 
                 self.sequence_representations = [torch.zeros(0) for _ in range(len(self.domain_names))]
 
@@ -92,11 +100,28 @@ class ProteinDataset(Dataset):
         except ValueError as error: raise ValueError(f"Error processing {path} while initialising dataset: {error}.")
         except Exception as error: raise Exception(f"Error processing {path} while initialising dataset: {error}.")
 
-    def __len__(self):
+    def __len__(self) -> int:
+
+        """
+        Returns the length of the dataset.
+
+        Returns:
+            - length (int): The number of items in the dataset.
+        """
 
         return len(self.variant_aa_seqs)
 
-    def __getitem__(self, index: int):
+    def __getitem__(self, index: int) -> dict:
+
+        """
+        Returns the item in the dataset at the given index.
+
+        Parameters:
+            - index (int): The index of the item to return, zero-indexed.
+
+        Returns:
+            - variant (dict): A dictionary of the values of the variant selected via the indexing.
+        """
 
         domain_name = self.domain_names[index]
         variant_aa_seq = self.variant_aa_seqs[index].replace("*", "<unk>")
@@ -118,7 +143,7 @@ class ProteinDataset(Dataset):
 
         return variant
 
-def get_datasets():
+def get_datasets() -> list:
 
     """
     Sets up the dataset with the given name using the ProteinDataset class.
