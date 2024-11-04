@@ -1,6 +1,7 @@
 # Standard modules
 import os
 import gc
+import math
 
 # Third-party modules
 import numpy as np
@@ -57,7 +58,7 @@ def manage_memory():
             torch.cuda.empty_cache()
             print("GPU Memory Available: ", round(total_memory * 100 / free_memory, 3), "%.")
 
-def truncate_domain(domain_name, domain_name_splitter):
+def truncate_domain(domain_name: str, domain_name_splitter: str) -> str:
 
     if domain_name_splitter != None:
 
@@ -82,7 +83,7 @@ def is_valid_sequence(sequence: str, valid_alphabet: str) -> bool:
 
         return all(residue in valid_alphabet for residue in sequence)
 
-def is_tensor_ready(value):
+def is_tensor_ready(value) -> bool:
 
     """
     Helper method to check if a value can be converted to a float.
@@ -112,60 +113,58 @@ def make_tensor_ready(value):
 
         return float(value)
 
-def get_family_size(family, family_dict: dict):
-
-        family_domains = family_dict[family]
-        family_mask = [domain in family_domains for domain in dataset.domain_names]
-        return sum(family_mask)
-
-import pandas as pd
-import torch
-import math
-from scipy.stats import pearsonr, spearmanr
-
 def compute_metrics(csv_path: str, parameter: str, min_count: int = 10):
     """
-    Reads a CSV file containing 'Predicted Energy' and 'True Energy' or
-    'Predicted Fitness' and 'True Fitness' columns, and computes MSE, RMSE,
+    Reads a CSV file containing Predicted Energy and True Energy or
+    Predicted Fitness and True Fitness columns, and computes MSE, RMSE,
     R-squared, Pearson, and Spearman correlations.
 
-    :param csv_path: Path to the CSV file with predictions and true values.
-    :param parameter: 'energy' or 'fitness' to specify which metrics to compute.
-    :param min_count: Minimum number of valid data points required to compute metrics.
-    :return: Dictionary with MSE, RMSE, R², Spearman correlation, and Pearson correlation,
-             or None values if the minimum count is not met.
+    Parameters:
+        - csv_path (str): Path to the CSV file with predictions and true values.
+        - parameter (str): "energy" or "fitness" to specify which metrics to compute.
+        - min_count (int): Minimum number of valid data points required to compute metrics.
+
+    Returns:
+        - (dict): Dictionary with MSE, RMSE, R², Spearman correlation, and Pearson correlation, or None values if the minimum count is not met.
     """
 
-    # Validate the 'parameter' argument
     if parameter == "energy":
+
         title = "Energy Prediction Metrics"
         predicted_column = "Predicted Energy"
         truth_column = "True Energy"
+
     elif parameter == "fitness":
+
         title = "Fitness Prediction Metrics"
         predicted_column = "Predicted Fitness"
         truth_column = "True Fitness"
-    else:
-        raise ValueError("Parameter must be 'energy' or 'fitness'.")
 
-    # Read the CSV file into a Pandas DataFrame
+    else:
+        raise ValueError("""Parameter must be "energy" or "fitness.""")
+
     try:
         df = pd.read_csv(csv_path)
+
     except FileNotFoundError:
+
         raise FileNotFoundError(f"The file {csv_path} was not found.")
+
     except pd.errors.EmptyDataError:
+
         raise ValueError(f"The file {csv_path} is empty.")
+
     except Exception as e:
+
         raise Exception(f"An error occurred while reading the file {csv_path}: {e}")
 
     # Ensure the DataFrame has the required columns
     if predicted_column not in df.columns or truth_column not in df.columns:
+
         raise ValueError(f"CSV file must contain '{predicted_column}' and '{truth_column}' columns.")
 
     # Drop rows with NaNs in either predicted or true columns
     filtered_df = df[[predicted_column, truth_column]].dropna()
-
-    # Count the number of valid data points
     valid_count = len(filtered_df)
 
     # Check if the number of valid data points meets the minimum threshold
@@ -260,7 +259,7 @@ def normalise_tensor(tensor):
 
     return torch.tensor(normalised_vector)
 
-def concatenate_embeddings(embeddings_list):
+def concatenate_embeddings(embeddings_list: list) -> list:
 
     concatenated_embeddings = []
 
@@ -270,13 +269,14 @@ def concatenate_embeddings(embeddings_list):
 
     return concatenated_embeddings
 
-def fit_principal_components(embeddings, component_index, device = "cpu"):
+def fit_principal_components(embeddings, component_index: int, device: str = "cpu"):
 
     assert embeddings.dim() == 3, "Input embeddings must be a 3D tensor such that each slice is a point."
 
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
     with torch.no_grad():
 
-        #embeddings = embeddings.to(device)
         batch_size, n_sequences, n_residues = embeddings.shape
         flattened_embeddings = embeddings.reshape(-1, n_residues)
         centered_points = flattened_embeddings - flattened_embeddings.mean(dim = 1, keepdim = True)

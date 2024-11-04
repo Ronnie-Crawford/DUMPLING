@@ -2,6 +2,7 @@
 import os
 import itertools
 import pickle
+from pathlib import Path
 
 # Third party modules
 import numpy as np
@@ -10,6 +11,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import esm
 from transformers import AutoModel, AutoTokenizer
+from transformers import EsmForProteinFolding, EsmTokenizer
 
 # Local modules
 from config_loader import config
@@ -52,6 +54,14 @@ def load_embeddings(
                     if not os.path.exists(path): os.makedirs(path)
                     torch.save(embeddings, f"{path}/embeddings_tensor.pt")
 
+                elif "ESMFold" in model_selection:
+                    
+                    model = EsmForProteinFolding.from_pretrained("./models/upstream_models/esmfold_3B_v1", output_hidden_states = True)
+                    tokeniser = EsmTokenizer.from_pretrained("./models/upstream_models/esmfold_3B_v1")
+                    embeddings = fetch_amplify_embeddings_batched(dataset, model, tokeniser, batch_size, device, embedding_type, embedding_layer, embedding_size)
+                    if not os.path.exists(path): os.makedirs(path)
+                    torch.save(embeddings, f"{path}/embeddings_tensor.pt")
+
                 elif "ESM" in model_selection:
 
                     model, alphabet, batch_converter, embedding_size, n_layers = setup_esm(device, model_selection)
@@ -61,7 +71,7 @@ def load_embeddings(
 
             else:
 
-                embeddings = torch.load(f"{path}/embeddings_tensor.pt", weights_only = False)
+                embeddings = torch.load(f"{path}/embeddings_tensor.pt", weights_only = False, map_location = "cpu")
 
             embeddings_list.append(embeddings)
 
@@ -112,52 +122,51 @@ def setup_amplify(device: str, model_selection: list):
 def setup_esm(device: str, model_selection: list):
 
     model, alphabet = None, None
+    upstream_models_path = "./models/upstream_models"
 
     match model_selection:
 
-        case "ESM1_T6_43M_UR50S":
-
-            model, alphabet = esm.pretrained.esm1_t6_43M_UR50S()
-
-        case "ESM1_T12_85M_UR50S":
-
-            model, alphabet = esm.pretrained.esm1_t12_85M_UR50S()
-
-        case "ESM1_T34_670M_UR100":
-
-            model, alphabet = esm.pretrained.esm1_t34_670M_UR100()
-
-        case "ESM1_T34_670M_UR50D":
-
-            model, alphabet = esm.pretrained.esm1_t34_670M_UR50D()
-
-        case "ESM1_T34_670M_UR50S":
-
-            model, alphabet = esm.pretrained.esm1_t34_670M_UR50S()
-
         case "ESM2_T6_8M_UR50D":
 
-            model, alphabet = esm.pretrained.esm2_t6_8M_UR50D()
+            #model, alphabet = esm.pretrained.esm2_t6_8M_UR50D()
+            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t6_8M_UR50D.pt")
+            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t6_8M_UR50D.pt")
 
         case "ESM2_T12_35M_UR50D":
 
-            model, alphabet = esm.pretrained.esm2_t12_35M_UR50D()
+            #model, alphabet = esm.pretrained.esm2_t12_35M_UR50D()
+            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t12_35M_UR50D.pt")
+            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t12_35M_UR50D.pt")
+            
 
         case "ESM2_T30_150M_UR50D":
 
-            model, alphabet = esm.pretrained.esm2_t30_150M_UR50D()
-
+            #model, alphabet = esm.pretrained.esm2_t30_150M_UR50D()
+            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t12_35M_UR50D.pt")
+            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t30_150M_UR50D.pt")
+            
         case "ESM2_T33_650M_UR50D":
 
-            model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+            #model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t33_650M_UR50D.pt")
+            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t33_650M_UR50D.pt")
 
         case "ESM2_T36_3B_UR50D":
 
-            model, alphabet = esm.pretrained.esm2_t36_3B_UR50D()
+            #model, alphabet = esm.pretrained.esm2_t36_3B_UR50D()
+            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t36_3B_UR50D.pt")
+            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t36_3B_UR50D.pt")
+
 
         case "ESM2_T48_15B_UR50D":
 
-            model, alphabet = esm.pretrained.esm2_t48_15B_UR50D()
+            #model, alphabet = esm.pretrained.esm2_t48_15B_UR50D()
+            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t48_15B_UR50D.pt")
+            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t48_15B_UR50D.pt")
+        
+        case "ESMFold":
+            
+            model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", output_hidden_states = True)
 
     batch_converter = alphabet.get_batch_converter()
     model = model.to(device)
@@ -166,6 +175,49 @@ def setup_esm(device: str, model_selection: list):
     n_layers = len(model.layers)
 
     return model, alphabet, batch_converter, embedding_size, n_layers
+
+def load_esm2_model(model_path: str):
+    
+    model_path = Path(model_path)
+    model_data = torch.load(str(model_path), map_location = "cpu")
+    model_name = model_path.stem
+    
+    #if _has_regression_weights(model_name):
+        
+    #    regression_location = str(model_location.with_suffix("")) + "-contact-regression.pt"
+    #    regression_data = torch.load(regression_location, map_location="cpu")
+        
+    #else:
+        
+    #    regression_data = None
+    
+    model, alphabet = esm.pretrained.load_model_and_alphabet_core(model_name, model_data)
+    
+    return model, alphabet
+
+def load_esmfold_model(model_path: str):
+    
+    model_path = Path(model_path)
+    model_data = torch.load(str(model_path), map_location = "cpu")
+    cfg = model_data["cfg"]["model"]
+    model_state = model_data["model"]
+    model = ESMFold(esmfold_config = cfg)
+    
+    expected_keys = set(model.state_dict().keys())
+    found_keys = set(model_state.keys())
+    
+    missing_essential_keys = []
+    for missing_key in expected_keys - found_keys:
+        if not missing_key.startswith("esm."):
+            missing_essential_keys.append(missing_key)
+
+    if missing_essential_keys:
+        raise RuntimeError(f"Keys '{', '.join(missing_essential_keys)}' are missing.")
+
+    model.load_state_dict(model_state, strict = False)
+    alphabet = model.alphabet
+    
+    return model, alphabet
 
 def fetch_amplify_embeddings_batched(
     dataset: Dataset,
@@ -189,9 +241,12 @@ def fetch_amplify_embeddings_batched(
         for batch_idx, batch in enumerate(dataloader):
 
             sequences = batch["variant_aa_seq"]
-            inputs = tokeniser(sequences, padding = True, truncation = True, return_tensors="pt", max_length=1024)
+            
+            inputs = tokeniser(sequences, padding = True, truncation = True, return_tensors = "pt", max_length=1024)
             inputs = inputs["input_ids"].to(device)
-            output = model(inputs, output_hidden_states=True)
+            #output = model(inputs, output_hidden_states=True)
+            model = model.to(device)
+            output = model(inputs)
             batch_embeddings = output.hidden_states[embedding_layer]
 
             if embedding_type == "MEAN":
@@ -231,7 +286,7 @@ def fetch_amplify_embeddings_batched(
                 full_embeddings[batch_idx * batch_size + i] = pooled_batch_embeddings[i]
 
             print(f"Fetched batch {batch_idx + 1} out of {len(dataloader)}")
-            manage_memory()
+            #manage_memory()
 
     print("Fetching embeddings complete!")
 
@@ -306,7 +361,7 @@ def fetch_esm_embeddings_batched(
                 full_embeddings[batch_idx * batch_size + i] = pooled_batch_embeddings[i]
 
             print(f"Fetched ESM representations for batch {batch_idx + 1} of {len(dataloader)}")
-            manage_memory()
+            #manage_memory()
 
     print(f"Completed fetching ESM representations for all {len(dataset)} items")
 

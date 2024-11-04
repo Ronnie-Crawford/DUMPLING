@@ -8,9 +8,9 @@ import torch
 # Local modules
 from config_loader import config
 
-def get_predictions(trained_model, inference_loader, criterion, DEVICE: str, results_path: str):
+def get_predictions(trained_model, inference_loader, criterion, device: str, results_path: str):
 
-    test_loss, predictions_df = test_model(trained_model, inference_loader, criterion, DEVICE)
+    test_loss, predictions_df = test_model(trained_model, inference_loader, criterion, device)
     torch.save(trained_model.state_dict(), results_path)
 
     return predictions_df
@@ -64,14 +64,7 @@ def test_model(model, test_loader, criterion, device: str):
             loss = energy_loss + fitness_loss
             test_loss += loss.item()
 
-            # Store predictions and ground truths
-            
-            #print("Batch energy predictions: ", energy_predictions)
-            #print("Batch fitness predictions: ", fitness_predictions)
-            #print("Batch energy truths: ", energy_values)
-            #print("Batch fitness truths: ", fitness_values)
-            #print("Batch energy masks: ", energy_mask)
-            #print("Batch fitness masks", fitness_mask)
+            # Store predictions and ground truths without masking
             
             #energy_predictions_list.extend(energy_predictions.masked_select(energy_mask).tolist())
             #fitness_predictions_list.extend(fitness_predictions.masked_select(fitness_mask).tolist())
@@ -79,11 +72,11 @@ def test_model(model, test_loader, criterion, device: str):
             #energy_truths_list.extend(energy_values.masked_select(energy_mask).tolist())
             #fitness_truths_list.extend(fitness_values.masked_select(fitness_mask).tolist())
 
-            domains.extend(batch['domain_name'])  # Assuming domain names are part of the batch
+            domains.extend(batch['domain_name'])
             
             # Store predictions and ground truths with masking
             for i in range(len(batch['domain_name'])):
-                # Energy
+
                 if energy_mask[i]:
                     
                     energy_truths_list.append(energy_values[i].item())
@@ -92,9 +85,14 @@ def test_model(model, test_loader, criterion, device: str):
 
                     energy_truths_list.append(math.nan)
                 
-                energy_predictions_list.append(energy_predictions[i].item())
+                if energy_predictions.dim() != 0:
+                
+                    energy_predictions_list.append(energy_predictions[i].item())
+                
+                else:
+                    
+                    energy_predictions_list.append(math.nan)
 
-                # Fitness
                 if fitness_mask[i]:
                     
                     fitness_truths_list.append(fitness_values[i].item())
@@ -103,13 +101,24 @@ def test_model(model, test_loader, criterion, device: str):
                     
                     fitness_truths_list.append(math.nan)
                 
-                fitness_predictions_list.append(fitness_predictions[i].item())
+                if fitness_predictions.dim() != 0:
+                
+                    fitness_predictions_list.append(fitness_predictions[i].item())
+                
+                else:
+                    
+                    fitness_predictions_list.append(math.nan)
 
     # Calculate the average test loss
     avg_test_loss = test_loss / len(test_loader)
     print(f"Test Loss: {avg_test_loss}")
 
-    # Create a pandas DataFrame with predictions and ground truth
+    print("Domains len: ", len(domains))
+    print("Predicted energy: ", len(energy_predictions_list))
+    print("True energy: ", len(energy_truths_list))
+    print("Predicted fitness: ", len(fitness_predictions_list))
+    print("True fitness: ", len(fitness_truths_list))
+
     results_df = pd.DataFrame({
         'Domain': domains,
         'Predicted Energy': energy_predictions_list,
@@ -118,7 +127,6 @@ def test_model(model, test_loader, criterion, device: str):
         'True Fitness': fitness_truths_list
     })
 
-    # Save the results to a CSV file
     results_df.to_csv("results/test_results.csv", index=False)
 
     return avg_test_loss, results_df
