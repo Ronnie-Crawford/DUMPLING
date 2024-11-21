@@ -1,5 +1,6 @@
 # Standard modules
 import json
+from pathlib import Path
 
 def read_config(file_path: str) -> dict:
 
@@ -19,6 +20,5 @@ def read_config(file_path: str) -> dict:
 
     return config
 
-# Load the configuration file once
-config_path = "./config.json"
+config_path = Path(__file__).resolve().parent.parent / "config.json"
 config = read_config(config_path)

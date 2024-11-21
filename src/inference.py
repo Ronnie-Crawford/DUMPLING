@@ -7,15 +7,19 @@ import torch
 
 # Local modules
 from config_loader import config
+from visuals import plot_input_histogram, plot_predictions_vs_true
+from helpers import get_results_path
 
-def get_predictions(trained_model, inference_loader, criterion, device: str, results_path: str):
+def get_predictions(trained_model, inference_loader, criterion, device: str, package_folder, results_path):
 
-    test_loss, predictions_df = test_model(trained_model, inference_loader, criterion, device)
-    torch.save(trained_model.state_dict(), results_path)
+    test_loss, predictions_df = test_model(trained_model, inference_loader, criterion, device, results_path)
+    torch.save(trained_model.state_dict(), results_path / "downstream_model.pt")
+    plot_input_histogram(predictions_df, results_path)
+    plot_predictions_vs_true(predictions_df, results_path)
 
     return predictions_df
 
-def test_model(model, test_loader, criterion, device: str):
+def test_model(model, test_loader, criterion, device: str, results_path):
 
     model.eval()
     test_loss = 0.0
@@ -64,17 +68,8 @@ def test_model(model, test_loader, criterion, device: str):
             loss = energy_loss + fitness_loss
             test_loss += loss.item()
 
-            # Store predictions and ground truths without masking
-            
-            #energy_predictions_list.extend(energy_predictions.masked_select(energy_mask).tolist())
-            #fitness_predictions_list.extend(fitness_predictions.masked_select(fitness_mask).tolist())
-
-            #energy_truths_list.extend(energy_values.masked_select(energy_mask).tolist())
-            #fitness_truths_list.extend(fitness_values.masked_select(fitness_mask).tolist())
-
             domains.extend(batch['domain_name'])
             
-            # Store predictions and ground truths with masking
             for i in range(len(batch['domain_name'])):
 
                 if energy_mask[i]:
@@ -113,12 +108,6 @@ def test_model(model, test_loader, criterion, device: str):
     avg_test_loss = test_loss / len(test_loader)
     print(f"Test Loss: {avg_test_loss}")
 
-    print("Domains len: ", len(domains))
-    print("Predicted energy: ", len(energy_predictions_list))
-    print("True energy: ", len(energy_truths_list))
-    print("Predicted fitness: ", len(fitness_predictions_list))
-    print("True fitness: ", len(fitness_truths_list))
-
     results_df = pd.DataFrame({
         'Domain': domains,
         'Predicted Energy': energy_predictions_list,
@@ -127,6 +116,6 @@ def test_model(model, test_loader, criterion, device: str):
         'True Fitness': fitness_truths_list
     })
 
-    results_df.to_csv("results/test_results.csv", index=False)
+    results_df.to_csv(results_path / "results.csv", index = False)
 
     return avg_test_loss, results_df

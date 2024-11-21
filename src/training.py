@@ -2,7 +2,20 @@
 import torch
 from torch.utils.data import DataLoader
 
-def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader: DataLoader, val_loader: DataLoader, criterion, optimiser, max_epochs: int = 100, patience: int = 10, device: str = "cpu"):
+# Local modules
+from config_loader import config
+from visuals import plot_loss
+
+def train_energy_and_fitness_finder_from_plm_embeddings_nn(
+    model,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    criterion,
+    optimiser,
+    results_path,
+    max_epochs: int = 100,
+    patience: int = 10,
+    device: str = "cpu"):
 
     model.to(device)
 
@@ -11,6 +24,9 @@ def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader: 
     best_val_loss = float('inf')
     epochs_without_improvement = 0
     best_model = None
+    
+    training_loss_list = []
+    validation_loss_list = []
 
     for epoch in range(max_epochs):
 
@@ -49,7 +65,11 @@ def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader: 
             running_loss += loss.item()
 
         # Log training loss
-        if (epoch + 1) % 1 == 0: print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {running_loss / len(train_loader)}")
+        if (epoch + 1) % 1 == 0:
+            
+            print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {running_loss / len(train_loader)}")
+        
+        training_loss_list.append(running_loss / len(train_loader))
 
         # Validation phase
         model.eval()
@@ -86,7 +106,11 @@ def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader: 
                 val_loss += loss.item()
 
         # Log validation loss
-        if (epoch + 1) % 1 == 0: print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {val_loss / len(val_loader)}")
+        if (epoch + 1) % 1 == 0:
+            
+            print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {val_loss / len(val_loader)}")
+
+        validation_loss_list.append(val_loss / len(val_loader))
 
         # Early stopping check
         avg_val_loss = val_loss / len(val_loader)
@@ -101,14 +125,16 @@ def train_energy_and_fitness_finder_from_plm_embeddings_nn(model, train_loader: 
 
             epochs_without_improvement += 1
 
-        if epochs_without_improvement >= patience:
+        if (epochs_without_improvement >= patience) and (epoch > config["TRAINING_PARAMETERS"]["MIN_EPOCHS"]):
 
             print(f"Early stopping triggered after {epoch + 1} epochs")
             break
 
     if best_model is not None:
 
-            model.load_state_dict(best_model)
+        model.load_state_dict(best_model)
+    
+    plot_loss(training_loss_list, validation_loss_list, results_path)
 
     return model
 
@@ -170,7 +196,7 @@ def train_fitness_finder_from_plm_embeddings_nn(model, train_loader: DataLoader,
 
             best_val_loss = avg_val_loss
             epochs_without_improvement = 0
-            best_model = model.state_dict()  # Save the best model
+            best_model = model.state_dict()
 
         else:
 

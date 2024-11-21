@@ -20,39 +20,41 @@ from datasets import ProteinDataset
 from helpers import manage_memory, concatenate_embeddings, normalise_embeddings, fit_principal_components
 
 def load_embeddings(
-    embedding_flag: str,
-    datasets: list,
+    all_dataset_names: list,
+    all_datasets: list,
     batch_size: int,
-    device: str,
-    datasets_in_use: list,
     model_selections: list,
     embedding_layers: list,
-    embedding_types: list
+    embedding_types: list,
+    device: str,
+    package_folder: Path
 ) -> tuple[list, int]:
-
+    
     embedding_size = 0
     embeddings = []
 
-    embedding_combinations = itertools.product(model_selections, embedding_layers, embedding_types)
+    embedding_combinations = list(itertools.product(model_selections, embedding_layers, embedding_types))
     merged_embeddings_df = pd.DataFrame()
 
-    for dataset_name, dataset in zip(datasets_in_use, datasets):
+    for dataset_name, dataset in zip(all_dataset_names, all_datasets):
 
         embeddings_list = []
 
         for model_selection, embedding_layer, embedding_type in embedding_combinations:
 
             embedding_df = pd.DataFrame()
-            path = f"./embeddings/dataset[{dataset_name}]/model[{model_selection}]/layer[{embedding_layer}]/embedding_type[{embedding_type}]"
+            
+            embedding_sorted_path = package_folder / f"embeddings/dataset[{dataset_name}]" / f"model[{model_selection}]" / f"layer[{embedding_layer}]" / f"embedding_type[{embedding_type}]"
+            embedding_tensor_path = embedding_sorted_path / "embeddings_tensor.pt"
 
-            if not os.path.exists(f"{path}/embeddings_tensor.pt"):
+            if not os.path.exists(embedding_tensor_path):
 
                 if "AMPLIFY" in model_selection:
 
                     model, embedding_size, tokeniser = setup_amplify(device, model_selection)
                     embeddings = fetch_amplify_embeddings_batched(dataset, model, tokeniser, batch_size, device, embedding_type, embedding_layer, embedding_size)
                     if not os.path.exists(path): os.makedirs(path)
-                    torch.save(embeddings, f"{path}/embeddings_tensor.pt")
+                    torch.save(embeddings, embedding_tensor_path)
 
                 elif "ESMFold" in model_selection:
                     
@@ -60,18 +62,18 @@ def load_embeddings(
                     tokeniser = EsmTokenizer.from_pretrained("./models/upstream_models/esmfold_3B_v1")
                     embeddings = fetch_amplify_embeddings_batched(dataset, model, tokeniser, batch_size, device, embedding_type, embedding_layer, embedding_size)
                     if not os.path.exists(path): os.makedirs(path)
-                    torch.save(embeddings, f"{path}/embeddings_tensor.pt")
+                    torch.save(embeddings, embedding_tensor_path)
 
                 elif "ESM" in model_selection:
 
-                    model, alphabet, batch_converter, embedding_size, n_layers = setup_esm(device, model_selection)
+                    model, alphabet, batch_converter, embedding_size, n_layers = setup_esm(device, model_selection, package_folder)
                     embeddings = fetch_esm_embeddings_batched(dataset, model, alphabet, batch_converter, n_layers, device, batch_size, embedding_layer, embedding_type)
-                    if not os.path.exists(path): os.makedirs(path)
-                    torch.save(embeddings, f"{path}/embeddings_tensor.pt")
+                    if not os.path.exists(embedding_sorted_path): os.makedirs(embedding_sorted_path)
+                    torch.save(embeddings, embedding_tensor_path)
 
             else:
 
-                embeddings = torch.load(f"{path}/embeddings_tensor.pt", weights_only = False, map_location = "cpu")
+                embeddings = torch.load(embedding_tensor_path, weights_only = False, map_location = "cpu")
 
             embeddings_list.append(embeddings)
 
@@ -81,9 +83,9 @@ def load_embeddings(
 
         dataset.sequence_representations = concatenate_embeddings(embeddings_list)
 
-    embedding_size = len(datasets[0].__dict__["sequence_representations"][0])
+    embedding_size = len(all_datasets[0].__dict__["sequence_representations"][0])
 
-    return datasets, embedding_size
+    return all_datasets, embedding_size
 
 def setup_amplify(device: str, model_selection: list):
 
@@ -119,50 +121,44 @@ def setup_amplify(device: str, model_selection: list):
 
     return model, embedding_size, tokeniser
 
-def setup_esm(device: str, model_selection: list):
+def setup_esm(device: str, model_selection: list, package_folder):
 
     model, alphabet = None, None
-    upstream_models_path = "./models/upstream_models"
+    upstream_models_path = package_folder / "models/upstream_models"
 
     match model_selection:
 
         case "ESM2_T6_8M_UR50D":
 
             #model, alphabet = esm.pretrained.esm2_t6_8M_UR50D()
-            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t6_8M_UR50D.pt")
-            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t6_8M_UR50D.pt")
+            model, alphabet = load_esm2_model(upstream_models_path / "esm2_t6_8M_UR50D.pt")
 
         case "ESM2_T12_35M_UR50D":
 
             #model, alphabet = esm.pretrained.esm2_t12_35M_UR50D()
-            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t12_35M_UR50D.pt")
-            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t12_35M_UR50D.pt")
+            model, alphabet = load_esm2_model(upstream_models_path / "esm2_t12_35M_UR50D.pt")
             
 
         case "ESM2_T30_150M_UR50D":
 
             #model, alphabet = esm.pretrained.esm2_t30_150M_UR50D()
-            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t12_35M_UR50D.pt")
-            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t30_150M_UR50D.pt")
+            model, alphabet = load_esm2_model(upstream_models_path / "esm2_t30_150M_UR50D.pt")
             
         case "ESM2_T33_650M_UR50D":
 
             #model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
-            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t33_650M_UR50D.pt")
-            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t33_650M_UR50D.pt")
+            model, alphabet = load_esm2_model(upstream_models_path / "esm2_t33_650M_UR50D.pt")
 
         case "ESM2_T36_3B_UR50D":
 
             #model, alphabet = esm.pretrained.esm2_t36_3B_UR50D()
-            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t36_3B_UR50D.pt")
-            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t36_3B_UR50D.pt")
+            model, alphabet = load_esm2_model(upstream_models_path / "esm2_t36_3B_UR50D.pt")
 
 
         case "ESM2_T48_15B_UR50D":
 
             #model, alphabet = esm.pretrained.esm2_t48_15B_UR50D()
-            #model, alphabet = esm.pretrained.load_model_and_alphabet_local("./models/upstream_models/esm2_t48_15B_UR50D.pt")
-            model, alphabet = load_esm2_model(f"{upstream_models_path}/esm2_t48_15B_UR50D.pt")
+            model, alphabet = load_esm2_model(upstream_models_path / "esm2_t48_15B_UR50D.pt")
         
         case "ESMFold":
             
@@ -178,18 +174,8 @@ def setup_esm(device: str, model_selection: list):
 
 def load_esm2_model(model_path: str):
     
-    model_path = Path(model_path)
-    model_data = torch.load(str(model_path), map_location = "cpu")
+    model_data = torch.load(model_path, map_location = "cpu")
     model_name = model_path.stem
-    
-    #if _has_regression_weights(model_name):
-        
-    #    regression_location = str(model_location.with_suffix("")) + "-contact-regression.pt"
-    #    regression_data = torch.load(regression_location, map_location="cpu")
-        
-    #else:
-        
-    #    regression_data = None
     
     model, alphabet = esm.pretrained.load_model_and_alphabet_core(model_name, model_data)
     
@@ -207,11 +193,15 @@ def load_esmfold_model(model_path: str):
     found_keys = set(model_state.keys())
     
     missing_essential_keys = []
+    
     for missing_key in expected_keys - found_keys:
+         
         if not missing_key.startswith("esm."):
+             
             missing_essential_keys.append(missing_key)
 
     if missing_essential_keys:
+        
         raise RuntimeError(f"Keys '{', '.join(missing_essential_keys)}' are missing.")
 
     model.load_state_dict(model_state, strict = False)
@@ -244,7 +234,6 @@ def fetch_amplify_embeddings_batched(
             
             inputs = tokeniser(sequences, padding = True, truncation = True, return_tensors = "pt", max_length=1024)
             inputs = inputs["input_ids"].to(device)
-            #output = model(inputs, output_hidden_states=True)
             model = model.to(device)
             output = model(inputs)
             batch_embeddings = output.hidden_states[embedding_layer]
@@ -286,7 +275,6 @@ def fetch_amplify_embeddings_batched(
                 full_embeddings[batch_idx * batch_size + i] = pooled_batch_embeddings[i]
 
             print(f"Fetched batch {batch_idx + 1} out of {len(dataloader)}")
-            #manage_memory()
 
     print("Fetching embeddings complete!")
 
@@ -324,7 +312,33 @@ def fetch_esm_embeddings_batched(
             output = model(batch_tokens, repr_layers = [embedding_layer], return_contacts = False)
             batch_embeddings = output["representations"][embedding_layer]
 
-            if embedding_type == "MEAN":
+            if embedding_type == "RAW":
+                
+                pooled_batch_embeddings = []
+                
+                for seq_idx, seq in enumerate(batch["variant_aa_seq"]):
+                    
+                    seq_len = len(seq)
+                    seq_embeddings = batch_embeddings[seq_idx, 1:seq_len + 1, :].cpu()
+                    pooled_batch_embeddings.append(seq_embeddings)
+            
+            elif embedding_type == "PADDED":
+                
+                sequence_embeddings = []
+                sequence_lengths = []
+                
+                for seq_idx, seq in enumerate(batch["variant_aa_seq"]):
+                    
+                    seq_len = len(seq)
+                    seq_embeddings = batch_embeddings[seq_idx, 1:seq_len + 1, :].cpu()
+                    sequence_embeddings.append(seq_embeddings)
+                    sequence_lengths.append(seq_len)
+
+                pooled_batch_embeddings = torch.nn.utils.rnn.pad_sequence(
+                    sequence_embeddings, batch_first=True
+                )
+
+            elif embedding_type == "MEAN":
 
                 pooled_batch_embeddings = batch_embeddings.mean(dim = 1).float().to(device)
 
@@ -361,7 +375,6 @@ def fetch_esm_embeddings_batched(
                 full_embeddings[batch_idx * batch_size + i] = pooled_batch_embeddings[i]
 
             print(f"Fetched ESM representations for batch {batch_idx + 1} of {len(dataloader)}")
-            #manage_memory()
 
     print(f"Completed fetching ESM representations for all {len(dataset)} items")
 

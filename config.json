@@ -15,11 +15,17 @@
     "EMBEDDING_LAYERS": [-1],
     "EMBEDDING_TYPES": ["MEAN"],
     "NORMALISE_EMBEDDINGS": false,
-    "DATASETS_IN_USE": ["MAGDA"],
+    "DOWNSTREAM_MODELS": {
+        "FEEDFORWARD": true,
+        "RECURRENT": false,
+        "PROTEIN_GRAPH": false,
+        "LATENT_GRAPH": false
+    },
+    "DATASETS_FOR_TRAINING": ["SMALL_ROCKLIN"],
+    "DATASETS_FOR_INFERENCE": ["MAGDA"],
     "DATASETS" : {
         "MAGDA" : {
-            "PATH" : "data/magda/data_main_magda.csv",
-            "HOMOLOGOUS_FAMILIES_PATH": "homology/domain_families_magda.tsv",
+            "PATH" : "magda/data_main_magda.csv",
             "DOMAIN_NAME_COLUMN" : "domain",
             "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
             "ENERGY_COLUMN": "",
@@ -29,8 +35,7 @@
             "DROP_DOMAIN_NAME_EXTENSION": null
         },
         "TONI" : {
-            "PATH" : "data/toni/data_main_toni.tsv",
-            "HOMOLOGOUS_FAMILIES_PATH": "homology/domain_families_toni.tsv",
+            "PATH" : "toni/data_main_toni.tsv",
             "DOMAIN_NAME_COLUMN" : "domain_ID",
             "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
             "ENERGY_COLUMN": "",
@@ -39,20 +44,38 @@
             "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": null
         },
+        "SMALL_TONI": {
+            "PATH": "small_toni/data_small_toni.tsv",
+            "DOMAIN_NAME_COLUMN": "domain_ID",
+            "VARIANT_AA_SEQ_COLUMN": "aa_seq",
+            "ENERGY_COLUMN": "",
+            "FITNESS_COLUMN" : "normalized_fitness",
+            "IS_ENERGY_REVERSED": false,
+            "IS_FITNESS_REVERSED": false,
+            "DROP_DOMAIN_NAME_EXTENSION": null
+        },
         "ROCKLIN" : {
-            "PATH" : "data/rocklin/data_with_fitness_rocklin.csv",
-            "HOMOLOGOUS_FAMILIES_PATH": "homology/domain_families_rocklin.tsv",
+            "PATH" : "rocklin/data_with_fitness_rocklin.csv",
             "DOMAIN_NAME_COLUMN" : "name",
             "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
             "ENERGY_COLUMN": "ddG_ML",
             "FITNESS_COLUMN" : "fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
+            "IS_ENERGY_REVERSED": true,
+            "IS_FITNESS_REVERSED": true,
+            "DROP_DOMAIN_NAME_EXTENSION": "."
+        },
+        "SMALL_ROCKLIN" : {
+            "PATH" : "small_rocklin/data_small_rocklin.csv",
+            "DOMAIN_NAME_COLUMN" : "name",
+            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
+            "ENERGY_COLUMN": "ddG_ML",
+            "FITNESS_COLUMN" : "fitness",
+            "IS_ENERGY_REVERSED": true,
+            "IS_FITNESS_REVERSED": true,
             "DROP_DOMAIN_NAME_EXTENSION": "."
         },
         "FIREPROT" : {
-            "PATH" : "",
-            "HOMOLOGOUS_FAMILIES_PATH": "",
+            "PATH" : "fireprot/",
             "DOMAIN_NAME_COLUMN" : "",
             "VARIANT_AA_SEQ_COLUMN" : "",
             "ENERGY_COLUMN": "ddG",
@@ -61,7 +84,17 @@
             "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": null
         },
-        "CUSTOM":{
+        "VAMP_SEQ": {
+            "PATH":"vamp_seq/data_main_vamp_seq.csv",
+            "DOMAIN_NAME_COLUMN":"mutant",
+            "VARIANT_AA_SEQ_COLUMN":"mutated_sequence",
+            "ENERGY_COLUMN": "",
+            "FITNESS_COLUMN":"DMS_score",
+            "IS_ENERGY_REVERSED": false,
+            "IS_FITNESS_REVERSED": false,
+            "DROP_DOMAIN_NAME_EXTENSION": null
+        },
+        "CUSTOM": {
             "PATH":"",
             "DOMAIN_NAME_COLUMN":"",
             "VARIANT_AA_SEQ_COLUMN":"",
@@ -74,20 +107,31 @@
     },
     "AMINO_ACIDS": "ACDEFGHIKLMNPQRSTVWY",
     "SPLITS": {
-        "TRAINING_SIZE": 0.75,
-        "VALIDATION_SIZE": 0.15,
+        "TRAINING_SIZE": 0.85,
+        "VALIDATION_SIZE": 0.05,
         "TESTING_SIZE": 0.1
     },
     "MODEL_ARCHITECTURE": {
         "HIDDEN_LAYERS": [],
-        "DROPOUT_LAYERS": [0, 0, 0, 0, 0, 0, 0, 0, 0]
+        "DROPOUT_LAYERS": [0, 0.2, 0, 0],
+        "ACTIVATION_FUNCTION": {
+            "RELU": false,
+            "LEAKYRELU": true,
+            "ELU": false,
+            "GELU": false,
+            "SELU": false
+        },
+        "WEIGHT_DECAY": 0.0005,
+        "LOSS_FUNCTION": ""
     },
     "TRAINING_PARAMETERS": {
-        "BATCH_SIZE": 16,
-        "LEARNING_RATE": 0.001,
-        "MAX_EPOCHS": 500,
-        "PATIENCE": 5,
-        "RANDOM_STATE": 1
+        "BATCH_SIZE": 128,
+        "LEARNING_RATE": 0.005,
+        "MIN_EPOCHS": 40,
+        "MAX_EPOCHS": 100,
+        "PATIENCE": 3,
+        "RANDOM_STATE": 1,
+        "N_WORKERS": 0
     },
     "HYPERPARAMETER_TUNING": {
         "SEARCH_ITERATIONS": 1000,

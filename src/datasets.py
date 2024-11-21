@@ -11,7 +11,39 @@ from helpers import truncate_domain, is_valid_sequence, is_tensor_ready
 
 class ProteinDataset(Dataset):
 
-    def __init__(self, path: str, domain_name_column: str, aa_seq_column: str, energy_column: str, fitness_column: str, domain_name_splitter: str):
+    def __init__(
+        self,
+        domain_names: list,
+        variant_aa_seqs: list,
+        energy_values: list,
+        fitness_values: list,
+        energy_mask: list,
+        fitness_mask: list,
+        sequence_representations: list,
+        ):
+        
+        self.domain_names = domain_names
+        self.variant_aa_seqs = variant_aa_seqs
+        self.energy_values = energy_values
+        self.fitness_values = fitness_values
+        self.energy_mask = energy_mask
+        self.fitness_mask = fitness_mask
+        self.sequence_representations = sequence_representations
+        
+        print(f"Initialised dataset of length {len(self)}")
+
+    @classmethod
+    def from_file(
+        cls,
+        path: str,
+        domain_name_column: str,
+        aa_seq_column: str,
+        energy_column: str,
+        fitness_column: str,
+        energy_reversal: bool,
+        fitness_reversal: bool,
+        domain_name_splitter: str
+        ):
 
         """
         Set up PyTorch dataset by reading in
@@ -83,7 +115,7 @@ class ProteinDataset(Dataset):
                     and is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"]))
                 ]
 
-                self.domain_names, self.variant_aa_seqs, self.energy_values, self.fitness_values, self.energy_mask, self.fitness_mask = zip(*((
+                domain_names, variant_aa_seqs, energy_values, fitness_values, energy_mask, fitness_mask = zip(*((
                     truncate_domain(str(row[domain_name_column]), domain_name_splitter),
                     str(row[aa_seq_column]),
                     float(row[energy_column]),
@@ -92,9 +124,26 @@ class ProteinDataset(Dataset):
                     bool(row["fitness_mask"])
                 ) for row in filtered_rows if is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"])) and is_tensor_ready(float(row[energy_column])) and is_tensor_ready(float(row[fitness_column]))))
 
-                self.sequence_representations = [torch.zeros(0) for _ in range(len(self.domain_names))]
+                sequence_representations = [torch.zeros(0) for _ in range(len(domain_names))]
 
-            print(f"Initialised dataset of length {len(self)}")
+                # Apply reversals if needed
+                if energy_reversal:
+                    
+                    energy_values = tuple(-x for x in energy_values)
+                    
+                if fitness_reversal:
+                    
+                    fitness_values = tuple(-x for x in fitness_values)
+            
+            return cls(
+                list(domain_names),
+                list(variant_aa_seqs),
+                list(energy_values),
+                list(fitness_values),
+                list(energy_mask),
+                list(fitness_mask),
+                sequence_representations
+            )
 
         except FileNotFoundError: raise FileNotFoundError(f"File {path} not found while initialising dataset.")
         except ValueError as error: raise ValueError(f"Error processing {path} while initialising dataset: {error}.")
@@ -142,8 +191,24 @@ class ProteinDataset(Dataset):
         }
 
         return variant
+    
+    def filter_by_indices(self, keep_indices):
+        
+        """
+        Returns a new ProteinDataset instance with data filtered by keep_indices.
+        """
+        
+        return ProteinDataset(
+            [self.domain_names[i] for i in keep_indices],
+            [self.variant_aa_seqs[i] for i in keep_indices],
+            [self.energy_values[i] for i in keep_indices],
+            [self.fitness_values[i] for i in keep_indices],
+            [self.energy_mask[i] for i in keep_indices],
+            [self.fitness_mask[i] for i in keep_indices],
+            [self.sequence_representations[i] for i in keep_indices],
+        )
 
-def get_datasets() -> list:
+def get_datasets(all_datasets: list, package_folder) -> list:
 
     """
     Sets up the dataset with the given name using the ProteinDataset class.
@@ -154,16 +219,18 @@ def get_datasets() -> list:
 
     datasets = []
 
-    for dataset_name in config["DATASETS_IN_USE"]:
+    for dataset_name in all_datasets:
 
         try:
 
-            dataset = ProteinDataset(
-                    config["DATASETS"][dataset_name]["PATH"],
+            dataset = ProteinDataset.from_file(
+                    package_folder / "data" / config["DATASETS"][dataset_name]["PATH"],
                     config["DATASETS"][dataset_name]["DOMAIN_NAME_COLUMN"],
                     config["DATASETS"][dataset_name]["VARIANT_AA_SEQ_COLUMN"],
                     config["DATASETS"][dataset_name]["ENERGY_COLUMN"],
                     config["DATASETS"][dataset_name]["FITNESS_COLUMN"],
+                    config["DATASETS"][dataset_name]["IS_ENERGY_REVERSED"],
+                    config["DATASETS"][dataset_name]["IS_FITNESS_REVERSED"],
                     config["DATASETS"][dataset_name]["DROP_DOMAIN_NAME_EXTENSION"]
                 )
 

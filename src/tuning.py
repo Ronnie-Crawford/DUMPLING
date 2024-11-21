@@ -8,9 +8,9 @@ from config_loader import config
 from models import set_up_model
 from training import train_fitness_finder_from_plm_embeddings_nn, train_energy_and_fitness_finder_from_plm_embeddings_nn
 from inference import get_predictions
-from helpers import compute_metrics
+from results import compute_metrics
 
-def optimise_hyperparameters(DEVICE, training_loader, validation_loader, testing_loader, search, embedding_size):
+def optimise_hyperparameters(device, training_loader, validation_loader, testing_loader, search, embedding_size):
 
     results = []
     best_layers = None
@@ -19,7 +19,7 @@ def optimise_hyperparameters(DEVICE, training_loader, validation_loader, testing
 
     if search == "grid-search":
 
-        for hidden_layers, dropout_layers, metrics in grid_search(DEVICE, training_loader, validation_loader, testing_loader, embedding_size):
+        for hidden_layers, dropout_layers, metrics in grid_search(device, training_loader, validation_loader, testing_loader, embedding_size):
 
             if metrics["Pearson"] > best_pearson:
 
@@ -42,7 +42,7 @@ def optimise_hyperparameters(DEVICE, training_loader, validation_loader, testing
 
         index = 1
 
-        for hidden_layers, dropout_layers, metrics in random_search(DEVICE, training_loader, validation_loader, testing_loader, embedding_size):
+        for hidden_layers, dropout_layers, metrics in random_search(device, training_loader, validation_loader, testing_loader, embedding_size):
 
             print(f"Attempting configuration [{index}/{config["HYPERPARAMETER_TUNING"]["SEARCH_ITERATIONS"]}:")
             print(f"hidden layers: {hidden_layers}")
@@ -72,7 +72,7 @@ def optimise_hyperparameters(DEVICE, training_loader, validation_loader, testing
 
     return df
 
-def grid_search(DEVICE, training_loader, validation_loader, testing_loader, embedding_size):
+def grid_search(device: str, training_loader, validation_loader, testing_loader, embedding_size: int):
 
     for i in range(2, 10):
 
@@ -91,7 +91,7 @@ def grid_search(DEVICE, training_loader, validation_loader, testing_loader, embe
 
                     yield hidden_layers, compute_metrics("results/test_results.csv")
 
-def random_search(DEVICE: str, training_loader, validation_loader, testing_loader, embedding_size: int):
+def random_search(device: str, training_loader, validation_loader, testing_loader, embedding_size: int):
 
     n_arrays = config["HYPERPARAMETER_TUNING"]["SEARCH_ITERATIONS"]
     min_layers = config["HYPERPARAMETER_TUNING"]["MIN_HIDDEN_LAYERS"]
@@ -119,10 +119,11 @@ def random_search(DEVICE: str, training_loader, validation_loader, testing_loade
         model, criterion, optimiser = set_up_model(embedding_size, hidden_layers, dropout_layers)
         trained_model = train_energy_and_fitness_finder_from_plm_embeddings_nn(model, training_loader, validation_loader, criterion, optimiser, config["TRAINING_PARAMETERS"]["MAX_EPOCHS"], config["TRAINING_PARAMETERS"]["PATIENCE"], DEVICE)
 
-        predictions_df = get_predictions(trained_model, testing_loader, criterion, DEVICE, "models/plm_embedding_to_simple_nn")
+        predictions_df = get_predictions(trained_model, testing_loader, criterion, device, "models/plm_embedding_to_simple_nn")
+        
         yield hidden_layers, dropout_layers, compute_metrics("results/test_results.csv", "fitness")
 
-def gradient_descent(DEVICE: str, training_loader, validation_loader, testing_loader, embedding_size: int):
+def gradient_descent(device: str, training_loader, validation_loader, testing_loader, embedding_size: int):
 
     search_iterations = config["HYPERPARAMETER_TUNING"]["SEARCH_ITERATIONS"]
     learning_rate = config["TRAINING_PARAMETERS"]["LEARNING_RATE"]
@@ -135,13 +136,11 @@ def gradient_descent(DEVICE: str, training_loader, validation_loader, testing_lo
 
     for n_layers in range(min_layers + 1, max_layers + 1):
 
-        ### We should set random values for the size and dropout of each layer based on the min max here ###
         layer_sizes = torch.FloatTensor(n_layers).uniform_(np.log(min_size), np.log(max_size)).requires_grad_(True)
         dropout_rates = torch.FloatTensor(n_layers).uniform_(min_dropout, max_dropout).requires_grad_(True)
 
         for search in search_iterations:
 
-            ### We should test several similar arrays at once so that a gradient can be worked out ###
             epsilon = 1e-4
             layer_sizes_plus = layer_sizes + epsilon
             layer_sizes_minus = layer_sizes - epsilon
@@ -151,13 +150,9 @@ def gradient_descent(DEVICE: str, training_loader, validation_loader, testing_lo
             hidden_layers = torch.exp(layer_sizes).round().int().tolist()
             dropout_layers = dropout_rates.tolist()
 
-
-            ### This part runs the model ###
             model, criterion, optimiser = set_up_model(embedding_size, hidden_layers, dropout_layers)
-            trained_model = train_fitness_finder_from_plm_embeddings_nn(model, training_loader, validation_loader, criterion, optimiser, config["TRAINING_PARAMETERS"]["MAX_EPOCHS"], config["TRAINING_PARAMETERS"]["PATIENCE"], DEVICE)
+            trained_model = train_fitness_finder_from_plm_embeddings_nn(model, training_loader, validation_loader, criterion, optimiser, config["TRAINING_PARAMETERS"]["MAX_EPOCHS"], config["TRAINING_PARAMETERS"]["PATIENCE"], device)
 
-            predictions_df = get_predictions(trained_model, testing_loader, criterion, DEVICE, "models/plm_embedding_to_simple_nn")
-
-            ### Then we can work out the gradient, and decide which values to try next here ####
+            predictions_df = get_predictions(trained_model, testing_loader, criterion, device, "models/plm_embedding_to_simple_nn")
 
             yield hidden_layers, dropout_layers, compute_metrics("results/test_results.csv")
