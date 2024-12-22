@@ -10,112 +10,217 @@ from config_loader import config
 from visuals import plot_input_histogram, plot_predictions_vs_true
 from helpers import get_results_path
 
-def get_predictions(trained_model, inference_loader, criterion, device: str, package_folder, results_path):
+def get_predictions(
+    downstream_models: list,
+    trained_model,
+    test_inference_loader,
+    criterion,
+    device: str,
+    output_features: list,
+    paths_dict: dict
+    ):
 
-    test_loss, predictions_df = test_model(trained_model, inference_loader, criterion, device, results_path)
-    torch.save(trained_model.state_dict(), results_path / "downstream_model.pt")
-    plot_input_histogram(predictions_df, results_path)
-    plot_predictions_vs_true(predictions_df, results_path)
+    
+    match downstream_models[0]:
+        
+        case "FFNN":
+            
+            test_loss, predictions_df = run_inference_on_ffnn(trained_model, test_inference_loader, criterion, device, output_features, paths_dict["results"])
+    
+        case "LSTM_UNIDIRECTIONAL" | "LSTM_BIDIRECTIONAL" | "GRU_UNIDIRECTIONAL" | "GRU_BIDIRECTIONAL":
+
+            test_loss, predictions_df = run_inference_on_rnn(trained_model, test_inference_loader, criterion, device, output_features, paths_dict["results"])
+    
+    torch.save(trained_model.state_dict(), paths_dict["results"] / "downstream_model.pt")
+    plot_input_histogram(predictions_df, output_features, paths_dict["results"])
+    plot_predictions_vs_true(predictions_df, output_features, paths_dict["results"])
 
     return predictions_df
 
-def test_model(model, test_loader, criterion, device: str, results_path):
+def run_inference_on_ffnn(model, test_inference_loader, criterion, device: str, output_features: list, results_path):
 
     model.eval()
-    test_loss = 0.0
+    test_inference_loss = 0.0
     
-    energy_predictions_list = []
-    fitness_predictions_list = []
-    energy_truths_list = []
-    fitness_truths_list = []
+    predictions = {}
+    truths = {}
+    
+    for output_feature in output_features:
+        
+        predictions[output_feature] = []
+        truths[output_feature] = []
+        
     domains = []
 
     with torch.no_grad():
         
-        for batch in test_loader:
+        for batch in test_inference_loader:
             
-            inputs = batch['sequence_representation'].float().to(device)
+            inputs = batch["sequence_representation"].float().to(device)
             
-            energy_values = batch["energy_value"].float().to(device)
-            fitness_values = batch['fitness_value'].float().to(device)
+            temp_predictions = {}
+            temp_truths = {}
+            masks = {}
             
-            energy_mask = batch["energy_mask"].bool().to(device)
-            fitness_mask = batch["fitness_mask"].bool().to(device)
+            for output_feature in output_features:
+                
+                temp_truths[output_feature] = batch[f"{output_feature}_value"].float().to(device)
+                masks[output_feature] = batch[f"{output_feature}_mask"].bool().to(device)
 
             outputs = model(inputs)
 
             if config["TRAINING_PARAMETERS"]["BATCH_SIZE"] > 1:
                 
-                energy_predictions = outputs[:, 0].squeeze()
-                fitness_predictions = outputs[:, 1].squeeze()
+                for index, output_feature in enumerate(output_features):
+                
+                    temp_predictions[output_feature] = outputs[:, index].squeeze()
                 
             else:
                 
-                energy_predictions = outputs[:, 0]
-                fitness_predictions = outputs[:, 1]
+                for index, output_feature in enumerate(output_features):
+                
+                    temp_predictions[output_feature] = outputs[:, index]
             
-            energy_loss = 0
-            fitness_loss = 0
+            losses = {}
             
-            if energy_predictions.masked_select(energy_mask).nelement() > 0:
+            for output_feature in output_features:
                 
-                energy_loss = criterion(energy_predictions.masked_select(energy_mask), energy_values.masked_select(energy_mask))
+                losses[output_feature] = 0
                 
-            if fitness_predictions.masked_select(fitness_mask).nelement() > 0:
+            for output_feature in output_features:
                 
-                fitness_loss = criterion(fitness_predictions.masked_select(fitness_mask), fitness_values.masked_select(fitness_mask))
+                if temp_predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
+                    
+                    losses[output_feature] = criterion(
+                        temp_predictions[output_feature].masked_select(masks[output_feature]),
+                        temp_truths[output_feature].masked_select(masks[output_feature])
+                        )
+                
             
-            loss = energy_loss + fitness_loss
-            test_loss += loss.item()
+            loss = sum(losses.values())
+            test_inference_loss += loss.item()
 
-            domains.extend(batch['domain_name'])
+            domains.extend(batch["domain_name"])
             
-            for i in range(len(batch['domain_name'])):
+            for i in range(len(batch["domain_name"])):
 
-                if energy_mask[i]:
+                for output_feature in output_features:
                     
-                    energy_truths_list.append(energy_values[i].item())
+                    if masks[output_feature][i]:
+                        
+                        truths[output_feature].append(temp_truths[output_feature][i].item())
                     
-                else:
-
-                    energy_truths_list.append(math.nan)
-                
-                if energy_predictions.dim() != 0:
-                
-                    energy_predictions_list.append(energy_predictions[i].item())
-                
-                else:
+                    else:
+                        
+                        truths[output_feature].append(math.nan)
                     
-                    energy_predictions_list.append(math.nan)
-
-                if fitness_mask[i]:
-                    
-                    fitness_truths_list.append(fitness_values[i].item())
-                    
-                else:
-                    
-                    fitness_truths_list.append(math.nan)
-                
-                if fitness_predictions.dim() != 0:
-                
-                    fitness_predictions_list.append(fitness_predictions[i].item())
-                
-                else:
-                    
-                    fitness_predictions_list.append(math.nan)
-
+                    if temp_predictions[output_feature].dim() != 0:
+                        
+                        predictions[output_feature].append(temp_predictions[output_feature][i].item())
+                        
+                    else:
+                        
+                        predictions[output_feature].append(math.nan)
+                        
     # Calculate the average test loss
-    avg_test_loss = test_loss / len(test_loader)
-    print(f"Test Loss: {avg_test_loss}")
+    average_test_inference_loss = test_inference_loss / len(test_inference_loader)
+    print(f"Inference Loss: {average_test_inference_loss}")
 
+    # Create results dataframe
     results_df = pd.DataFrame({
-        'Domain': domains,
-        'Predicted Energy': energy_predictions_list,
-        'True Energy': energy_truths_list,
-        'Predicted Fitness': fitness_predictions_list,
-        'True Fitness': fitness_truths_list
+        "domain": domains,
     })
+    
+    for output_feature in output_features:
+    
+        results_df[f"{output_feature}_predictions"] = predictions[output_feature]
+        results_df[f"{output_feature}_truth"] = truths[output_feature]
 
     results_df.to_csv(results_path / "results.csv", index = False)
 
-    return avg_test_loss, results_df
+    return average_test_inference_loss, results_df
+
+def run_inference_on_rnn(model, test_inference_loader, criterion, device: str, output_features: list, results_path):
+    
+    model.eval()
+    test_inference_loss = 0.0
+
+    predictions = {feature: [] for feature in output_features}
+    truths = {feature: [] for feature in output_features}
+    domains = []
+
+    with torch.no_grad():
+        
+        for batch in test_inference_loader:
+            
+            inputs = batch["sequence_representation"].float().to(device)
+            lengths = batch["length"].to(device)
+
+            temp_predictions = {}
+            temp_truths = {}
+            masks = {}
+
+            for output_feature in output_features:
+                
+                temp_truths[output_feature] = batch[f"{output_feature}_value"].float().to(device)
+                masks[output_feature] = batch[f"{output_feature}_mask"].bool().to(device)
+
+            outputs = model(inputs, lengths)
+
+            for index, output_feature in enumerate(output_features):
+                
+                temp_predictions[output_feature] = outputs[:, index]
+
+            losses = {}
+            
+            for output_feature in output_features:
+                
+                if temp_predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
+                    
+                    losses[output_feature] = criterion(
+                        temp_predictions[output_feature].masked_select(masks[output_feature]),
+                        temp_truths[output_feature].masked_select(masks[output_feature])
+                    ).item()
+                    
+                else:
+                    
+                    losses[output_feature] = 0.0
+
+            total_loss = sum(losses.values())
+            test_inference_loss += total_loss
+
+            domains.extend(batch.get("domain_name", []))
+
+            batch_size = inputs.size(0)
+            
+            for i in range(batch_size):
+                
+                for output_feature in output_features:
+                    
+                    if masks[output_feature][i]:
+                        
+                        truths[output_feature].append(temp_truths[output_feature][i].item())
+                        predictions[output_feature].append(temp_predictions[output_feature][i].item())
+                        
+                    else:
+                        
+                        truths[output_feature].append(math.nan)
+                        predictions[output_feature].append(math.nan)
+
+    # Calculate the average test loss
+    average_test_inference_loss = test_inference_loss / len(test_inference_loader)
+    print(f"Inference Loss: {average_test_inference_loss}")
+
+    # Create results dataframe
+    results_df = pd.DataFrame({
+        "domain": domains,
+    })
+
+    for output_feature in output_features:
+        
+        results_df[f"{output_feature}_predictions"] = predictions[output_feature]
+        results_df[f"{output_feature}_truth"] = truths[output_feature]
+
+    results_df.to_csv(results_path / "results.csv", index=False)
+
+    return average_test_inference_loss, results_df

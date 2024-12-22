@@ -1,3 +1,7 @@
+# Standard modules
+import random
+import copy
+
 # Third-party modules
 import numpy as np
 import pandas as pd
@@ -6,7 +10,6 @@ import torch
 # Local modules
 from config_loader import config
 from models import set_up_model
-from training import train_fitness_finder_from_plm_embeddings_nn, train_energy_and_fitness_finder_from_plm_embeddings_nn
 from inference import get_predictions
 from results import compute_metrics
 
@@ -44,7 +47,7 @@ def optimise_hyperparameters(device, training_loader, validation_loader, testing
 
         for hidden_layers, dropout_layers, metrics in random_search(device, training_loader, validation_loader, testing_loader, embedding_size):
 
-            print(f"Attempting configuration [{index}/{config["HYPERPARAMETER_TUNING"]["SEARCH_ITERATIONS"]}:")
+            print(f"Attempting configuration [{index}/{config['HYPERPARAMETER_TUNING']['SEARCH_ITERATIONS']}:")
             print(f"hidden layers: {hidden_layers}")
             print(f"dropout layers: {dropout_layers}")
 
@@ -91,37 +94,69 @@ def grid_search(device: str, training_loader, validation_loader, testing_loader,
 
                     yield hidden_layers, compute_metrics("results/test_results.csv")
 
-def random_search(device: str, training_loader, validation_loader, testing_loader, embedding_size: int):
+def random_search(
+    search_iterations: int,
+    min_batch_size: int,
+    max_batch_size: int,
+    min_hidden_layers: int,
+    max_hidden_layers: int,
+    min_hidden_size: int,
+    max_hidden_size: int,
+    min_dropout: float,
+    max_dropout: float,
+    min_learning_rate: float,
+    max_learning_rate: float,
+    min_weight_decay: float,
+    max_weight_decay: float,
+    loss_functions: list,
+    activation_functions: list,
+    ):
 
-    n_arrays = config["HYPERPARAMETER_TUNING"]["SEARCH_ITERATIONS"]
-    min_layers = config["HYPERPARAMETER_TUNING"]["MIN_HIDDEN_LAYERS"]
-    max_layers = config["HYPERPARAMETER_TUNING"]["MAX_HIDDEN_LAYERS"]
-    min_size = config["HYPERPARAMETER_TUNING"]["MIN_HIDDEN_LAYER_SIZE"]
-    max_size = config["HYPERPARAMETER_TUNING"]["MAX_HIDDEN_LAYER_SIZE"]
-    min_dropout = config["HYPERPARAMETER_TUNING"]["MIN_DROPOUT"]
-    max_dropout = config["HYPERPARAMETER_TUNING"]["MAX_DROPOUT"]
+    random_configs_list = []
+    
+    for search_index in range(search_iterations):
 
-    hidden_layer_arrays = []
-    dropout_layer_arrays = []
+        new_config = copy.deepcopy(config)
 
-    for _ in range(n_arrays):
-
-        n_layers = np.random.randint(min_layers, max_layers)
-        random_hidden_layers = np.random.randint(min_size, max_size, size=n_layers)
-        random_dropout_layers = np.random.uniform(min_dropout, max_dropout, size=n_layers)
-        random_dropout_layers[np.random.randint(0, n_layers, size=n_layers // 2)] = 0.0
-
-        hidden_layer_arrays.append(random_hidden_layers)
-        dropout_layer_arrays.append(random_dropout_layers)
-
-    for hidden_layers, dropout_layers in zip(hidden_layer_arrays, dropout_layer_arrays):
-
-        model, criterion, optimiser = set_up_model(embedding_size, hidden_layers, dropout_layers)
-        trained_model = train_energy_and_fitness_finder_from_plm_embeddings_nn(model, training_loader, validation_loader, criterion, optimiser, config["TRAINING_PARAMETERS"]["MAX_EPOCHS"], config["TRAINING_PARAMETERS"]["PATIENCE"], DEVICE)
-
-        predictions_df = get_predictions(trained_model, testing_loader, criterion, device, "models/plm_embedding_to_simple_nn")
+        # Choose random embedding model from models set to true in original config
+        embedding_models = [key for key, value in config.get("EMBEDDING_MODELS", {}).items() if value]
+        new_config["EMBEDDING_MODELS"] = {key: False for key in config["EMBEDDING_MODELS"].keys()}
+        new_config["EMBEDDING_MODELS"][random.choice(embedding_models)] = True
         
-        yield hidden_layers, dropout_layers, compute_metrics("results/test_results.csv", "fitness")
+        new_config["NORMALISE_EMBEDDINGS"] = random.choice([True, False])
+
+        # Choose random downstream model from models set to true in original config
+        downstream_models = [key for key, value in config.get("DOWNSTREAM_MODELS", {}).items() if value]
+        new_config["DOWNSTREAM_MODELS"] = {key: False for key in config["DOWNSTREAM_MODELS"].keys()}
+        new_config["DOWNSTREAM_MODELS"][random.choice(downstream_models)] = True
+        
+        # Scalar values set to random value between min and max
+        new_config["TRAINING_PARAMETERS"]["BATCH_SIZE"] = int(np.random.randint(min_batch_size, max_batch_size))
+        n_hidden_layers = int(np.random.randint(min_hidden_layers, max_hidden_layers))
+        hidden_layer_sizes = np.random.randint(min_hidden_size, max_hidden_size, size=n_hidden_layers).tolist()
+        new_config["MODEL_ARCHITECTURE"]["HIDDEN_LAYERS"] = [int(size) for size in hidden_layer_sizes]
+        dropout_layers = np.random.uniform(min_dropout, max_dropout, size=n_hidden_layers)
+        # Randomly set some dropout rates to 0.0
+        num_zero_dropouts = np.random.randint(0, n_hidden_layers)
+        zero_indices = np.random.choice(n_hidden_layers, size=num_zero_dropouts, replace=False)
+        dropout_layers[zero_indices] = 0.0
+        new_config["MODEL_ARCHITECTURE"]["DROPOUT_LAYERS"] = dropout_layers.tolist()
+        new_config["TRAINING_PARAMETERS"]["LEARNING_RATE"] = float(np.random.uniform(min_learning_rate, max_learning_rate))
+        new_config["MODEL_ARCHITECTURE"]["WEIGHT_DECAY"] = float(np.random.uniform(min_weight_decay, max_weight_decay))
+        
+        # Choose random loss function from functions set to true in original config
+        loss_functions = [key for key, value in config["MODEL_ARCHITECTURE"].get("LOSS_FUNCTIONS", {}).items() if value]
+        new_config["MODEL_ARCHITECTURE"]["LOSS_FUNCTIONS"] = {key: False for key in config["MODEL_ARCHITECTURE"]["LOSS_FUNCTIONS"].keys()}
+        new_config["MODEL_ARCHITECTURE"]["LOSS_FUNCTIONS"][random.choice(loss_functions)] = True
+        
+        # Choose random activation function from functions set to true in original config
+        activation_functions = [key for key, value in config["MODEL_ARCHITECTURE"].get("ACTIVATION_FUNCTIONS", {}).items() if value]
+        new_config["MODEL_ARCHITECTURE"]["ACTIVATION_FUNCTIONS"] = {key: False for key in config["MODEL_ARCHITECTURE"]["ACTIVATION_FUNCTIONS"].keys()}
+        new_config["MODEL_ARCHITECTURE"]["ACTIVATION_FUNCTIONS"][random.choice(activation_functions)] = True
+        
+        random_configs_list.append(new_config)
+    
+    return random_configs_list
 
 def gradient_descent(device: str, training_loader, validation_loader, testing_loader, embedding_size: int):
 

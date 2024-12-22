@@ -16,13 +16,67 @@
     "EMBEDDING_TYPES": ["MEAN"],
     "NORMALISE_EMBEDDINGS": false,
     "DOWNSTREAM_MODELS": {
-        "FEEDFORWARD": true,
-        "RECURRENT": false,
-        "PROTEIN_GRAPH": false,
-        "LATENT_GRAPH": false
+        "FFNN": true,
+        "LSTM_UNIDIRECTIONAL": false,
+        "LSTM_BIDIRECTIONAL": false,
+        "GRU_UNIDIRECTIONAL": false,
+        "GRU_BIDIRECTIONAL": false
     },
-    "DATASETS_FOR_TRAINING": ["SMALL_ROCKLIN"],
-    "DATASETS_FOR_INFERENCE": ["MAGDA"],
+    "DATASETS_FOR_TRAINING": ["ROCKLIN_INDELS"],
+    "DATASETS_FOR_INFERENCE": ["ROCKLIN_INDELS"],
+    "AMINO_ACIDS": "ACDEFGHIKLMNPQRSTVWY",
+    "SPLITS": {
+        "TRAINING_SIZE": 0.8,
+        "VALIDATION_SIZE": 0.00,
+        "TESTING_SIZE": 0.2
+    },
+    "MODEL_ARCHITECTURE": {
+        "HIDDEN_LAYERS": [256, 2],
+        "DROPOUT_LAYERS": [0, 0, 0, 0],
+        "WEIGHT_DECAY": 0.0007,
+        "ACTIVATION_FUNCTIONS": {
+            "RELU": false,
+            "LEAKYRELU": false,
+            "ELU": false,
+            "GELU": true,
+            "SELU": false
+        },
+        "LOSS_FUNCTIONS": {
+            "MSELOSS": false,
+            "MAELOSS": true,
+            "HUBERLOSS": false
+        },
+        "OPTIMISERS": {
+            "ADAM": true,
+            "SGD": false,
+            "RMSPROP": false,
+            "ADAMW": false
+        }
+    },
+    "TRAINING_PARAMETERS": {
+        "BATCH_SIZE": 128,
+        "LEARNING_RATE": 0.005,
+        "MIN_EPOCHS": 30,
+        "MAX_EPOCHS": 100,
+        "PATIENCE": 3,
+        "RANDOM_STATE": 1,
+        "N_WORKERS": 0
+    },
+    "HYPERPARAMETER_TUNING": {
+        "SEARCH_ITERATIONS": 10,
+        "MIN_BATCH_SIZE": 4,
+        "MAX_BATCH_SIZE": 256,
+        "MIN_HIDDEN_LAYERS": 1,
+        "MAX_HIDDEN_LAYERS": 4,
+        "MIN_HIDDEN_LAYER_SIZE": 2,
+        "MAX_HIDDEN_LAYER_SIZE": 16,
+        "MIN_DROPOUT": 0.0,
+        "MAX_DROPOUT": 0.5,
+        "MIN_LEARNING_RATE": 0.001,
+        "MAX_LEARNING_RATE": 0.01,
+        "MIN_WEIGHT_DECAY": 0,
+        "MAX_WEIGHT_DECAY": 0.001
+    },
     "DATASETS" : {
         "MAGDA" : {
             "PATH" : "magda/data_main_magda.csv",
@@ -45,7 +99,7 @@
             "DROP_DOMAIN_NAME_EXTENSION": null
         },
         "SMALL_TONI": {
-            "PATH": "small_toni/data_small_toni.tsv",
+            "PATH": "toni/data_small_toni.tsv",
             "DOMAIN_NAME_COLUMN": "domain_ID",
             "VARIANT_AA_SEQ_COLUMN": "aa_seq",
             "ENERGY_COLUMN": "",
@@ -60,18 +114,48 @@
             "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
             "ENERGY_COLUMN": "ddG_ML",
             "FITNESS_COLUMN" : "fitness",
-            "IS_ENERGY_REVERSED": true,
-            "IS_FITNESS_REVERSED": true,
+            "IS_ENERGY_REVERSED": false,
+            "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": "."
         },
         "SMALL_ROCKLIN" : {
-            "PATH" : "small_rocklin/data_small_rocklin.csv",
+            "PATH" : "rocklin/small_subset_with_fitness_rocklin.csv",
             "DOMAIN_NAME_COLUMN" : "name",
             "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
             "ENERGY_COLUMN": "ddG_ML",
             "FITNESS_COLUMN" : "fitness",
-            "IS_ENERGY_REVERSED": true,
-            "IS_FITNESS_REVERSED": true,
+            "IS_ENERGY_REVERSED": false,
+            "IS_FITNESS_REVERSED": false,
+            "DROP_DOMAIN_NAME_EXTENSION": "."
+        },
+        "ROCKLIN_INDELS" : {
+            "PATH" : "rocklin/indels_with_fitness_rocklin.csv",
+            "DOMAIN_NAME_COLUMN" : "name",
+            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
+            "ENERGY_COLUMN": "ddG_ML",
+            "FITNESS_COLUMN" : "fitness",
+            "IS_ENERGY_REVERSED": false,
+            "IS_FITNESS_REVERSED": false,
+            "DROP_DOMAIN_NAME_EXTENSION": "."
+        },
+        "SMALL_ROCKLIN_INDELS" : {
+            "PATH" : "rocklin/indels_small_subset_with_fitness_rocklin.csv",
+            "DOMAIN_NAME_COLUMN" : "name",
+            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
+            "ENERGY_COLUMN": "ddG_ML",
+            "FITNESS_COLUMN" : "fitness",
+            "IS_ENERGY_REVERSED": false,
+            "IS_FITNESS_REVERSED": false,
+            "DROP_DOMAIN_NAME_EXTENSION": "."
+        },
+        "SMALL_ROCKLIN_SUBSTITUTIONS" : {
+            "PATH" : "rocklin/substitutions_small_subset_with_fitness_rocklin.csv",
+            "DOMAIN_NAME_COLUMN" : "name",
+            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
+            "ENERGY_COLUMN": "ddG_ML",
+            "FITNESS_COLUMN" : "fitness",
+            "IS_ENERGY_REVERSED": false,
+            "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": "."
         },
         "FIREPROT" : {
@@ -104,42 +188,5 @@
             "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": null
         }
-    },
-    "AMINO_ACIDS": "ACDEFGHIKLMNPQRSTVWY",
-    "SPLITS": {
-        "TRAINING_SIZE": 0.85,
-        "VALIDATION_SIZE": 0.05,
-        "TESTING_SIZE": 0.1
-    },
-    "MODEL_ARCHITECTURE": {
-        "HIDDEN_LAYERS": [],
-        "DROPOUT_LAYERS": [0, 0.2, 0, 0],
-        "ACTIVATION_FUNCTION": {
-            "RELU": false,
-            "LEAKYRELU": true,
-            "ELU": false,
-            "GELU": false,
-            "SELU": false
-        },
-        "WEIGHT_DECAY": 0.0005,
-        "LOSS_FUNCTION": ""
-    },
-    "TRAINING_PARAMETERS": {
-        "BATCH_SIZE": 128,
-        "LEARNING_RATE": 0.005,
-        "MIN_EPOCHS": 40,
-        "MAX_EPOCHS": 100,
-        "PATIENCE": 3,
-        "RANDOM_STATE": 1,
-        "N_WORKERS": 0
-    },
-    "HYPERPARAMETER_TUNING": {
-        "SEARCH_ITERATIONS": 1000,
-        "MIN_HIDDEN_LAYERS": 1,
-        "MAX_HIDDEN_LAYERS": 16,
-        "MIN_HIDDEN_LAYER_SIZE": 3,
-        "MAX_HIDDEN_LAYER_SIZE": 1000,
-        "MIN_DROPOUT": 0.0,
-        "MAX_DROPOUT": 0.5
     }
 }

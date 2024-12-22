@@ -5,11 +5,13 @@ import math
 from pathlib import Path
 import datetime
 import shutil
+import hashlib
 
 # Third-party modules
 import numpy as np
 import pandas as pd
 import torch
+from torch.utils.data import DataLoader, ConcatDataset
 
 # Local modules
 from splits import read_homology_file
@@ -148,6 +150,12 @@ def make_tensor_ready(value):
 
         return float(value)
 
+def compute_dataset_hash(dataset):
+    
+    sequence_str = ''.join(dataset.variant_aa_seqs)
+    
+    return hashlib.md5(sequence_str.encode('utf-8')).hexdigest()
+
 def normalise_embeddings(embeddings_list):
 
     normalised_embeddings_list = []
@@ -179,6 +187,87 @@ def normalise_tensor(tensor):
         normalised_vector = vector
 
     return torch.tensor(normalised_vector)
+
+def collate_fn(batch):
+    
+    # Extract sequences and compute lengths
+    sequences = [item["variant_aa_seq"] for item in batch]
+    sequence_representations = [item["sequence_representation"] for item in batch]
+    lengths = torch.tensor([len(sequence) for sequence in sequences])
+    
+    # Pad sequences to the same length
+    padded_sequences = torch.nn.utils.rnn.pad_sequence(sequence_representations, batch_first = True)
+    
+    # Collect other batch elements
+    batch_dict = {
+        "sequence_representation": padded_sequences,
+        "length": lengths,
+    }
+    
+    for key in batch[0]:
+        
+        if key not in ['sequence_representation']:
+            
+            values = [item[key] for item in batch]
+            
+            if isinstance(values[0], torch.Tensor):
+                
+                batch_dict[key] = torch.stack(values)
+                
+            elif isinstance(values[0], (float, int, bool)):
+                
+                batch_dict[key] = torch.tensor(values)
+                
+            elif isinstance(values[0], str):
+                
+                batch_dict[key] = values  # Keep as list of strings
+                
+            else:
+                
+                # Handle other data types if necessary
+                batch_dict[key] = values  # Keep as is or implement custom handling
+                
+    return batch_dict
+
+def old_collate_fn(batch):
+    
+    # Extract sequences and compute lengths
+    sequences = [item["sequence_representation"] for item in batch]
+    lengths = torch.tensor([seq.size(0) for seq in sequences])  # Assuming sequences are tensors of shape (seq_length, embedding_dim)
+    
+    # Pad sequences to the same length
+    padded_sequences = torch.nn.utils.rnn.pad_sequence(sequences, batch_first=True)
+    
+    # Collect other batch elements
+    batch_dict = {
+        'sequence_representation': padded_sequences,
+        'length': lengths,
+    }
+    
+    for key in batch[0]:
+        
+        if key not in ['sequence_representation']:
+            
+            values = [item[key] for item in batch]
+            
+            if isinstance(values[0], torch.Tensor):
+                
+                batch_dict[key] = torch.stack(values)
+                
+            elif isinstance(values[0], (float, int, bool)):
+                
+                batch_dict[key] = torch.tensor(values)
+                
+            elif isinstance(values[0], str):
+                
+                batch_dict[key] = values  # Keep as list of strings
+                
+            else:
+                
+                # Handle other data types if necessary
+                batch_dict[key] = values  # Keep as is or implement custom handling
+                
+    return batch_dict
 
 def concatenate_embeddings(embeddings_list: list) -> list:
 
@@ -227,7 +316,7 @@ def fit_principal_components(embeddings, component_index: int, device: str = "cp
 
     return principal_components
 
-def remove_homologous_sequences_from_inference(all_dataset_names, inference_only_datasets, training_datasets, homology_path):
+def remove_homologous_sequences_from_inference(datasets_dict, homology_path):
     
     homology_family_dict = read_homology_file(homology_path / "sequence_families.tsv")
     sequence_to_family_dict = {}
@@ -240,7 +329,7 @@ def remove_homologous_sequences_from_inference(all_dataset_names, inference_only
     
     used_domain_families = []
     
-    for dataset in training_datasets:
+    for dataset in datasets_dict["train"].values():
     
         for sequence in dataset.variant_aa_seqs:
             
@@ -252,7 +341,7 @@ def remove_homologous_sequences_from_inference(all_dataset_names, inference_only
     
     filtered_datasets = []
     
-    for dataset in inference_only_datasets:
+    for dataset in datasets_dict["inference_only"].values():
         
         keep_indices = []
         
@@ -270,3 +359,94 @@ def remove_homologous_sequences_from_inference(all_dataset_names, inference_only
         filtered_datasets.append(filtered_dataset)
     
     return filtered_datasets
+
+def concat_splits(splits: dict) -> dict:
+    
+    if splits["train"]:
+        
+        splits["train"] = ConcatDataset(splits["train"])
+        
+    else:
+        
+        splits["train"] = None
+
+    if splits["validation"]:
+        
+        splits["validation"] = ConcatDataset(splits["validation"])
+        
+    else:
+        
+        splits["validation"] = None
+
+    if splits["test"] and splits["inference"]:
+        
+        splits["testing_inference"] = ConcatDataset(splits["test"] + splits["inference"])
+    
+    elif splits["test"] and not splits["inference"]:
+        
+        splits["test_inference"] = ConcatDataset(splits["test"])
+        
+    elif not splits["test"] and splits["inference"]:
+        
+        splits["test_inference"] = ConcatDataset(splits["inference"])
+    
+    else:
+        
+        splits["test_inference"] = None
+    
+    splits["test"] = None
+    splits["inference"] = None
+    
+    return splits
+
+def splits_to_loaders(splits: dict, batch_size: int, n_workers: int) -> dict:
+    
+    if splits["train"] is not None:
+        
+        training_loader = DataLoader(
+            splits["train"],
+            batch_size = batch_size,
+            shuffle = True,
+            num_workers = n_workers,
+            collate_fn=collate_fn
+            )
+        
+    else:
+        
+        training_loader = None
+        
+    if len(splits["validation"]) > 0:
+        
+        validation_loader = DataLoader(
+            splits["validation"],
+            batch_size = batch_size,
+            shuffle = True,
+            num_workers = n_workers,
+            collate_fn=collate_fn
+            )
+    
+    else:
+        
+        validation_loader = None
+    
+    if splits["test_inference"] is not None:
+        
+        testing_inference_loader = DataLoader(
+            splits["test_inference"],
+            batch_size = batch_size,
+            shuffle = False,
+            num_workers = n_workers,
+            collate_fn=collate_fn
+            )
+
+    else:
+        
+        testing_loader = None
+
+    dataloaders = {
+        "train": training_loader,
+        "validation": validation_loader,
+        "test_inference": testing_inference_loader
+    }
+
+    return dataloaders

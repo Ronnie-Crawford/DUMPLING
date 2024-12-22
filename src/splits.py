@@ -1,5 +1,7 @@
 # Standard modules
 import copy
+import pickle
+import os
 
 # Third-party modules
 import numpy as np
@@ -11,7 +13,7 @@ from torch.utils.data import Subset, ConcatDataset, random_split
 # Local modules
 from config_loader import config
 
-def handle_splits_flag(splits: str, all_dataset_names: str, training_dataset_names: list, training_datasets: list, homology_path) -> tuple[dict, dict, dict]:
+def handle_splits_flag(splits: str, datasets_dict: dict, homology_path) -> tuple[dict, dict, dict]:
 
     """
     Decides how to split data based on the value passed via the splits flag.
@@ -30,36 +32,26 @@ def handle_splits_flag(splits: str, all_dataset_names: str, training_dataset_nam
 
     if splits == "homologous-aware":
 
-        training_split, validation_split, testing_split = get_splits(all_dataset_names, training_dataset_names, training_datasets, homology_path)
+        splits = get_splits(datasets_dict, homology_path)
 
-    elif (splits == "random") or (splits is None):
+    elif splits == "random":
 
         training_split, validation_split, testing_split = random_split(datasets[0], [config["SPLITS"]["TRAINING_SIZE"], config["SPLITS"]["VALIDATION_SIZE"], config["SPLITS"]["TESTING_SIZE"]])
 
+    elif splits == "thermompnn":
+        
+        splits = get_thermompnn_splits(datasets_dict["train"].values(), package_folder)
+
     else:
-
-        raise Exception("Value for splits flag not recognised.")
-
-    splits = {
-        "training": training_split,
-        "validation": validation_split,
-        "testing": testing_split
-    }
+        raise ValueError("Value for splits flag not recognized.")
 
     return splits
 
-def get_splits(all_dataset_names: str, training_dataset_names: list, training_datasets: list, homology_path) -> tuple[Dataset, Dataset, Dataset]:
+def get_splits(datasets_dict: dict, homology_path) -> tuple[Dataset, Dataset, Dataset]:
     
     # Read homology families
     homology_families_file_path = homology_path / "sequence_families.tsv"
     homology_family_dict = read_homology_file(homology_families_file_path)
-    
-    # Prepare datasets and sequences
-    datasets = {}
-    
-    for name, dataset in zip(training_dataset_names, training_datasets):
-        
-        datasets[name] = dataset
     
     # Assign splits globally
     split_ratios = {
@@ -67,24 +59,19 @@ def get_splits(all_dataset_names: str, training_dataset_names: list, training_da
         'validation': config["SPLITS"]["VALIDATION_SIZE"],
         'test': config["SPLITS"]["TESTING_SIZE"],
     }
-    homology_splits = assign_splits(datasets, homology_family_dict, split_ratios)
+    homology_splits = assign_splits(datasets_dict["train"], homology_family_dict, split_ratios)
     
     # Subset datasets based on assigned splits
-    splits = {'train': [], 'validation': [], 'test': []}
+    splits = {"train": [], "validation": [], "test": []}
     
-    for name, dataset in datasets.items():
+    for name, dataset in datasets_dict["train"].items():
         
         dataset_splits = subset_dataset(dataset, homology_splits)
-        splits['train'].append(dataset_splits['train'])
-        splits['validation'].append(dataset_splits['validation'])
-        splits['test'].append(dataset_splits['test'])
+        splits["train"].append(dataset_splits["train"])
+        splits["validation"].append(dataset_splits["validation"])
+        splits["test"].append(dataset_splits["test"])
     
-    # Concatenate splits across datasets
-    training_split = splits['train']
-    validation_split = splits['validation']
-    testing_split = splits['test']
-    
-    return training_split, validation_split, testing_split
+    return splits
 
 def assign_splits(
     datasets: dict,
@@ -116,7 +103,35 @@ def assign_splits(
     # Shuffle homology families
     homology_family_ids = list(homology_family_dict.keys())
     np.random.shuffle(homology_family_ids)
+    splits_needing_assignment = [split for split, ratio in split_ratios.items() if ratio > 0]
 
+    if len(homology_family_ids) < len(splits_needing_assignment):
+        
+        raise Exception("Not enough homology families to assign at least one to each split.")
+
+    # Assign one homology family to each split that needs assignment
+    initial_family_assignments = {}
+    
+    for split in splits_needing_assignment:
+        
+        # Pop a homology family from the list
+        family_id = homology_family_ids.pop()
+        sequences = homology_family_dict[family_id]
+        sequences_per_dataset, sequence_to_dataset = count_sequences_per_dataset(sequences, datasets)
+
+        # Assign the family to the split
+        for seq in sequences:
+            
+            homology_splits[seq] = split
+
+        for name in dataset_names:
+            
+            assigned_sequences[name][split] += sequences_per_dataset[name]
+
+        # Keep track of assigned families
+        initial_family_assignments[family_id] = split
+
+    # Now proceed with the remaining homology families
     for family_id in homology_family_ids:
         
         sequences = homology_family_dict[family_id]
@@ -129,7 +144,7 @@ def assign_splits(
         for seq in sequences:
             
             homology_splits[seq] = best_split
-            
+
         for name in dataset_names:
             
             assigned_sequences[name][best_split] += sequences_per_dataset[name]
@@ -277,15 +292,7 @@ def subset_dataset(dataset: Dataset, homology_splits: dict) -> dict:
         
         sequence = item["variant_aa_seq"]
         assigned_split = homology_splits.get(sequence, None)
-        
-        if assigned_split is not None:
-            
-            split_indices[assigned_split].append(idx)
-            
-        else:
-            
-            # Handle sequences not assigned to any split (should not happen)
-            continue
+        split_indices[assigned_split].append(idx)
     
     splits_dict = {
         "train":  dataset.filter_by_indices(split_indices["train"]),
@@ -294,3 +301,74 @@ def subset_dataset(dataset: Dataset, homology_splits: dict) -> dict:
     }
 
     return splits_dict
+
+def get_thermompnn_splits(training_datasets: list, package_folder) -> dict:
+    
+    """
+    Reads the ThermoMPNN splits and assigns sequences to splits.
+
+    Parameters:
+        - training_datasets (list): List containing the Rocklin dataset.
+        - package_folder: Path to the package folder.
+
+    Returns:
+        - splits (dict): Dictionary with keys 'train', 'validation', 'test' containing lists of dataset subsets.
+    """
+
+    # Assuming the splits file is located in a known path within the package folder
+    splits_file_path = package_folder / "splits" / "mega_splits.pkl"
+
+    with open(splits_file_path, "rb") as f:
+        
+        splits_data = pickle.load(f)
+
+    # Extract the splits
+    train_domains = splits_data.get("train", [])
+    val_domains = splits_data.get("val", [])
+    test_domains = splits_data.get("test", [])
+
+    # Prepare sets for quick lookup
+    train_set = set(train_domains)
+    val_set = set(val_domains)
+    test_set = set(test_domains)
+
+    # Initialize split indices
+    training_indices = []
+    validation_indices = []
+    testing_indices = []
+
+    # Assuming only Rocklin dataset is used
+    rocklin_dataset = training_datasets[0]
+
+    # Map domain names in your dataset to splits
+    for idx in range(len(rocklin_dataset)):
+        
+        sample = rocklin_dataset[idx]
+        domain_name = sample["domain_name"]
+        domain_id = extract_domain_id(domain_name)
+
+        if domain_id in train_set:
+            
+            training_indices.append(idx)
+            
+        elif domain_id in val_set:
+            
+            validation_indices.append(idx)
+            
+        elif domain_id in test_set:
+            
+            testing_indices.append(idx)
+            
+        else:
+            
+            print(f"Domain ID: {domain_id} not found in train, val, or test splits.")
+
+    # Create splits_dict similar to subset_dataset
+    splits = {"train": [], "validation": [], "test": []}
+
+    # Assuming your dataset has a method filter_by_indices
+    splits["train"].append(rocklin_dataset.filter_by_indices(training_indices))
+    splits["validation"].append(rocklin_dataset.filter_by_indices(validation_indices))
+    splits["test"].append(rocklin_dataset.filter_by_indices(testing_indices))
+
+    return splits

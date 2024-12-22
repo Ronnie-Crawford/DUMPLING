@@ -6,58 +6,46 @@ import torch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import LabelEncoder
-import umap.umap_ as umap
+#from sklearn.decomposition import PCA
+#from sklearn.preprocessing import LabelEncoder
+#import umap.umap_ as umap
 
-def plot_predictions_vs_true(predictions_df: pd.DataFrame, results_path):
+def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list, results_path):
 
-    truth_column = "True Energy"
-    predicted_column = "Predicted Energy"
+    for output_feature in output_features:
+        
+        truth_column = f"{output_feature}_truth"
+        predicted_column = f"{output_feature}_predictions"
+        
+        true_values = predictions_df[truth_column]
+        predicted_values = predictions_df[predicted_column]
+        
+        plt.scatter(true_values, predicted_values, color = "blue", label = "Predicted vs True", s = 0.1, alpha = 0.8)
+        min_val = min(true_values.min(), predicted_values.min())
+        max_val = max(true_values.max(), predicted_values.max())
+        plt.plot([min_val, max_val], [min_val, max_val], "r--")
+        
+        plt.xlabel(f"True {output_feature.capitalize()}")
+        plt.ylabel(f"Predicted {output_feature.capitalize()}")
+        plt.title(f"Predicted vs True {output_feature.capitalize()} Values")
+        plt.legend()
+        
+        plt.savefig(results_path / f"{output_feature}_accuracy_scatter.png")
+        plt.close()
 
-    true_values = predictions_df[truth_column]
-    predicted_values = predictions_df[predicted_column]
+def plot_input_histogram(predictions_df: pd.DataFrame, output_features: list, results_path):
 
-    plt.scatter(true_values, predicted_values, color = "blue", label = "Predicted vs True", s = 0.1, alpha = 0.8)
-    min_val = min(true_values.min(), predicted_values.min())
-    max_val = max(true_values.max(), predicted_values.max())
-    plt.plot([min_val, max_val], [min_val, max_val], "r--")
-    plt.xlabel("True Fitness")
-    plt.ylabel("Predicted Fitness")
-    plt.title("Predicted vs True Fitness Values")
-    plt.legend()
+    for output_feature in output_features:
+        
+        truth_column = f"{output_feature}_truth"
+        true_values = predictions_df[truth_column]
+        
+        if true_values.notnull().values.any():
 
-    plt.savefig(results_path / "energy_accuracy_scatter.png")
-    plt.close()
-
-    truth_column = "True Fitness"
-    predicted_column = "Predicted Fitness"
-
-    true_values = predictions_df[truth_column]
-    predicted_values = predictions_df[predicted_column]
-
-    plt.scatter(true_values, predicted_values, color = "blue", label = "Predicted vs True", s = 0.1, alpha = 0.8)
-    min_val = min(true_values.min(), predicted_values.min())
-    max_val = max(true_values.max(), predicted_values.max())
-    plt.plot([min_val, max_val], [min_val, max_val], "r--")
-    plt.xlabel("True Fitness")
-    plt.ylabel("Predicted Fitness")
-    plt.title("Predicted vs True Fitness Values")
-    plt.legend()
-
-    plt.savefig(results_path / "fitness_accuracy_scatter.png")
-    plt.close()
-
-def plot_input_histogram(predictions_df: pd.DataFrame, results_path):
-
-    truth_column = "True Fitness"
-    true_values = predictions_df[truth_column]
-
-    plt.hist(true_values, bins = 100)
-    plt.title("Histogram of True Fitness")
-
-    plt.savefig(results_path / "input_histogram.png")
-    plt.close()
+            plt.hist(true_values, bins = 100)
+            plt.title(f"Histogram of True {output_feature.capitalize()}")
+            plt.savefig(results_path / f"input_{output_feature}_histogram.png")
+            plt.close()
     
 def plot_embeddings(
     datasets: list,
@@ -125,7 +113,7 @@ def plot_embeddings(
     if dim_reduction_method == "PCA":
         
         embeddings_np = embeddings_tensor.cpu().numpy()
-        pca = PCA(n_components=n_components)
+        pca = PCA(n_components = n_components)
         reduced_embeddings = pca.fit_transform(embeddings_np)
         
     elif dim_reduction_method == "UMAP":
@@ -137,8 +125,6 @@ def plot_embeddings(
         raise ValueError("dim_reduction_method must be 'PCA' or 'UMAP'")
 
     # Plotting: Create pairwise scatter plots of components
-    
-
     component_indices = range(n_components)
     pairs = list(combinations(component_indices, 2))
     n_plots = len(pairs)
@@ -157,23 +143,25 @@ def plot_embeddings(
         sc = ax.scatter(
             reduced_embeddings[:, i],
             reduced_embeddings[:, j],
-            c=labels,
-            cmap=cmap,
-            s=0.5,
-            alpha=0.8
+            c = labels,
+            cmap = cmap,
+            s = 0.5,
+            alpha = 0.8
         )
         ax.set_xlabel(f'Component {i+1}')
         ax.set_ylabel(f'Component {j+1}')
         ax.set_title(f'Components {i+1} vs {j+1}')
+        
     # Remove any unused subplots
     for idx in range(n_plots, n_rows * n_cols):
+        
         fig.delaxes(axes.flatten()[idx])
 
     # Adjust layout and add color bar
     plt.tight_layout()
-    fig.subplots_adjust(right=0.9)
+    fig.subplots_adjust(right = 0.9)
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-    fig.colorbar(sc, cax=cbar_ax, label=colorbar_label)
+    fig.colorbar(sc, cax = cbar_ax, label = colorbar_label)
 
     plt.suptitle(f'Dimensionally Reduced Embeddings ({dim_reduction_method})', fontsize=16)
     plt.savefig(results_path / f"embedding_{output_attribute}_{dim_reduction_method}_{label_type}.png", dpi=300)
@@ -213,10 +201,14 @@ def plot_loss(training_loss, validation_loss, results_path):
 
     plt.figure(figsize=(10, 6))
     plt.plot(epochs, training_loss, 'b-', label = "Training Loss")
-    plt.plot(epochs, validation_loss, 'r-', label = "Validation Loss")
+    
+    if len(validation_loss) > 0:
+        
+        plt.plot(epochs, validation_loss, 'r-', label = "Validation Loss")
+    
     plt.xlabel("Number of Epochs")
     plt.ylabel("Loss")
-    plt.title("Training and Validation Loss Over Epochs")
+    plt.title("Loss Over Epochs")
     plt.legend()
     plt.grid(True)
     plt.savefig((results_path / "loss.png"))

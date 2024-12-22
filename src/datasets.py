@@ -116,13 +116,22 @@ class ProteinDataset(Dataset):
                 ]
 
                 domain_names, variant_aa_seqs, energy_values, fitness_values, energy_mask, fitness_mask = zip(*((
-                    truncate_domain(str(row[domain_name_column]), domain_name_splitter),
-                    str(row[aa_seq_column]),
-                    float(row[energy_column]),
-                    float(row[fitness_column]),
-                    bool(row["energy_mask"]),
-                    bool(row["fitness_mask"])
-                ) for row in filtered_rows if is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"])) and is_tensor_ready(float(row[energy_column])) and is_tensor_ready(float(row[fitness_column]))))
+                    truncate_domain(
+                        str(row[domain_name_column]),
+                        domain_name_splitter),
+                        str(row[aa_seq_column]),
+                        float(row[energy_column]),
+                        float(row[fitness_column]),
+                        bool(row["energy_mask"]),
+                        bool(row["fitness_mask"])
+                    ) for row in filtered_rows if is_valid_sequence(
+                        str(row[aa_seq_column]),
+                        str(config["AMINO_ACIDS"])
+                        ) and is_tensor_ready(
+                            float(row[energy_column])
+                            ) and is_tensor_ready(
+                                float(row[fitness_column])
+                                )))
 
                 sequence_representations = [torch.zeros(0) for _ in range(len(domain_names))]
 

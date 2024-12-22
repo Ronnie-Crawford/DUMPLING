@@ -6,209 +6,385 @@ from torch.utils.data import DataLoader
 from config_loader import config
 from visuals import plot_loss
 
-def train_energy_and_fitness_finder_from_plm_embeddings_nn(
+def handle_training_models(
+    downstream_model_type,
     model,
-    train_loader: DataLoader,
-    val_loader: DataLoader,
+    dataloaders,
+    output_features,
     criterion,
     optimiser,
     results_path,
-    max_epochs: int = 100,
-    patience: int = 10,
-    device: str = "cpu"):
+    min_epochs,
+    max_epochs,
+    patience,
+    device
+):
+    
+    trained_model = None
+    
+    match downstream_model_type:
+        
+        case "FFNN":
+            
+            trained_model = train_ffnn_from_embeddings(
+                model,
+                dataloaders,
+                output_features,
+                criterion,
+                optimiser,
+                results_path,
+                min_epochs,
+                max_epochs,
+                patience,
+                device
+            )
+        
+        case "LSTM_UNIDIRECTIONAL" | "LSTM_BIDIRECTIONAL" | "GRU_UNIDIRECTIONAL" | "GRU_BIDIRECTIONAL":
+            
+            trained_model = train_rnn_from_embeddings(
+                model,
+                dataloaders,
+                output_features,
+                criterion,
+                optimiser,
+                results_path,
+                min_epochs,
+                max_epochs,
+                patience,
+                device
+            )
+        
+    return trained_model
 
+def train_ffnn_from_embeddings(
+    model,
+    dataloaders: dict,
+    output_features: list,
+    criterion,
+    optimiser,
+    results_path,
+    min_epochs: int,
+    max_epochs: int,
+    patience: int,
+    device: str
+):
+    
     model.to(device)
-
-    best_energy_val_loss = float('inf')
-    best_fitness_val_loss = float('inf')
-    best_val_loss = float('inf')
+    
+    if dataloaders["train"] is None:
+        
+        raise Exception("Currently do not support running without training.")
+    
     epochs_without_improvement = 0
     best_model = None
-    
     training_loss_list = []
     validation_loss_list = []
+    best_training_loss = float("inf")
+    best_validation_loss = float("inf")
 
     for epoch in range(max_epochs):
 
+        # Prepare to start training
         model.train()
-        running_loss = 0.0
-
-        for batch in train_loader:
-
+        training_loss = 0.0
+        
+        # Iterate through batches in training data loader
+        for batch in dataloaders["train"]:
+            
             inputs = batch["sequence_representation"].float().to(device)
-            energy_values = batch["energy_value"].float().to(device)
-            fitness_values = batch["fitness_value"].float().to(device)
-
-            energy_mask = batch["energy_mask"].bool().to(device)
-            fitness_mask = batch["fitness_mask"].bool().to(device)
-
+            values = {}
+            masks = {}
+            
+            for output_feature in output_features:
+                
+                values[output_feature] = batch[f"{output_feature}_value"].float().to(device)
+                masks[output_feature] = batch[f"{output_feature}_mask"].bool().to(device)
+            
             optimiser.zero_grad()
             outputs = model(inputs)
-
-            energy_predictions = outputs[:, 0].squeeze()
-            fitness_predictions = outputs[:, 1].squeeze()
-
-            energy_loss = 0
-            fitness_loss = 0
-
-            if energy_predictions.masked_select(energy_mask).nelement() > 0:
-
-                energy_loss = criterion(energy_predictions.masked_select(energy_mask), energy_values.masked_select(energy_mask))
-
-            if fitness_predictions.masked_select(fitness_mask).nelement() > 0:
-
-                fitness_loss = criterion(fitness_predictions.masked_select(fitness_mask), fitness_values.masked_select(fitness_mask))
-
-            loss = energy_loss + fitness_loss
-            loss.backward()
+            
+            predictions = {}
+            losses = {}
+            
+            for index, output_feature in enumerate(output_features):
+                
+                predictions[output_feature] = outputs[:, index].view(-1)
+                losses[output_feature] = torch.tensor(0.0, device=device)
+                
+                if predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
+                    
+                    losses[output_feature] = criterion(
+                        predictions[output_feature].masked_select(masks[output_feature]),
+                        values[output_feature].masked_select(masks[output_feature])
+                        )
+                    
+            total_loss = sum(losses.values())
+            total_loss.backward()
             optimiser.step()
-            running_loss += loss.item()
-
+            training_loss += total_loss.item()
+            
         # Log training loss
         if (epoch + 1) % 1 == 0:
-            
-            print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {running_loss / len(train_loader)}")
         
-        training_loss_list.append(running_loss / len(train_loader))
+            print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {training_loss / len(dataloaders['train'])}")
+    
+        training_loss_list.append(training_loss / len(dataloaders["train"]))
+        
+        # Validation phase of trianing step
+        if dataloaders["validation"] is None:
+        
+            # Early stopping check
+            average_training_loss = training_loss / len(dataloaders["train"])
 
-        # Validation phase
-        model.eval()
-        val_loss = 0.0
+            if average_training_loss < best_training_loss:
 
-        with torch.no_grad():
+                best_training_loss = average_training_loss
+                epochs_without_improvement = 0
+                best_model = model.state_dict()
 
-            for batch in val_loader:
+            else:
 
-                inputs = batch['sequence_representation'].float().to(device)
-                energy_values = batch["energy_value"].float().to(device)
-                fitness_values = batch['fitness_value'].float().to(device)
+                epochs_without_improvement += 1
 
-                energy_mask = batch["energy_mask"].bool().to(device)
-                fitness_mask = batch["fitness_mask"].bool().to(device)
+            if (epochs_without_improvement >= patience) and (epoch > min_epochs):
 
-                outputs = model(inputs)
-
-                energy_predictions = outputs[:, 0].squeeze()
-                fitness_predictions = outputs[:, 1].squeeze()
-
-                energy_loss = 0
-                fitness_loss = 0
-
-                if energy_predictions.masked_select(energy_mask).nelement() > 0:
-
-                    energy_loss = criterion(energy_predictions.masked_select(energy_mask), energy_values.masked_select(energy_mask))
-
-                if fitness_predictions.masked_select(fitness_mask).nelement() > 0:
-
-                    fitness_loss = criterion(fitness_predictions.masked_select(fitness_mask), fitness_values.masked_select(fitness_mask))
-
-                loss = energy_loss + fitness_loss
-                val_loss += loss.item()
-
-        # Log validation loss
-        if (epoch + 1) % 1 == 0:
-            
-            print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {val_loss / len(val_loader)}")
-
-        validation_loss_list.append(val_loss / len(val_loader))
-
-        # Early stopping check
-        avg_val_loss = val_loss / len(val_loader)
-
-        if avg_val_loss < best_val_loss:
-
-            best_val_loss = avg_val_loss
-            epochs_without_improvement = 0
-            best_model = model.state_dict()  # Save the best model
-
+                print(f"Early stopping triggered after {epoch + 1} epochs")
+                break
+        
         else:
+            
+            model.eval()
+            validation_loss = 0.0
+            
+            with torch.no_grad():
+                
+                for batch in dataloaders["validation"]:
 
-            epochs_without_improvement += 1
+                    inputs = batch["sequence_representation"].float().to(device)
+                    output_feature_values = {}
+                    output_feature_masks = {}
+                    
+                    for output_feature in output_features:
+            
+                        output_feature_values[output_feature] = batch[f"{output_feature}_value"].float().to(device)
+                        output_feature_masks[output_feature] = batch[f"{output_feature}_mask"].bool().to(device)
+                    
+                    outputs = model(inputs)
 
-        if (epochs_without_improvement >= patience) and (epoch > config["TRAINING_PARAMETERS"]["MIN_EPOCHS"]):
+                    output_feature_predictions = {}
+                    output_feature_losses = {}
 
-            print(f"Early stopping triggered after {epoch + 1} epochs")
-            break
+                    for index, output_feature in enumerate(output_features):
+            
+                        output_feature_predictions[output_feature] = outputs[:, index].squeeze()
+                        output_feature_losses[output_feature] = 0
+                        
+                        if output_feature_predictions[output_feature].masked_select(output_feature_masks[output_feature]).nelement() > 0:
+                
+                            output_feature_losses[output_feature] = criterion(
+                                output_feature_predictions[output_feature].masked_select(output_feature_masks[output_feature]),
+                                output_feature_values[output_feature].masked_select(output_feature_masks[output_feature])
+                                )
+                            
+                    loss = sum(output_feature_losses.values())
+                    validation_loss += loss.item()
+                        
+            # Log validation loss
+            if (epoch + 1) % 1 == 0:
+                
+                print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {validation_loss / len(dataloaders['validation'])}")
 
+            validation_loss_list.append(validation_loss / len(dataloaders["validation"]))
+            
+            # Early stopping check
+            average_validation_loss = validation_loss / len(dataloaders["validation"])
+
+            if average_validation_loss < best_validation_loss:
+
+                best_validation_loss = average_validation_loss
+                epochs_without_improvement = 0
+                best_model = model.state_dict()
+
+            else:
+
+                epochs_without_improvement += 1
+
+            if (epochs_without_improvement >= patience) and (epoch > min_epochs):
+
+                print(f"Early stopping triggered after {epoch + 1} epochs")
+                break
+            
     if best_model is not None:
 
         model.load_state_dict(best_model)
-    
+
     plot_loss(training_loss_list, validation_loss_list, results_path)
 
     return model
 
-def train_fitness_finder_from_plm_embeddings_nn(model, train_loader: DataLoader, val_loader: DataLoader, criterion, optimiser, max_epochs: int = 100, patience: int = 10, device: str = "cpu"):
-
+def train_rnn_from_embeddings(
+    model,
+    dataloaders: dict,
+    output_features: list,
+    criterion,
+    optimiser,
+    results_path,
+    min_epochs: int,
+    max_epochs: int,
+    patience: int,
+    device: str
+):
     model.to(device)
-
-    best_val_loss = float('inf')
+    
+    if dataloaders["train"] is None:
+        
+        raise Exception("Currently do not support running without training.")
+    
     epochs_without_improvement = 0
     best_model = None
+    training_loss_list = []
+    validation_loss_list = []
+    best_training_loss = float("inf")
+    best_validation_loss = float("inf")
 
     for epoch in range(max_epochs):
 
-        # Training phase
+        # Prepare to start training
         model.train()
-        running_loss = 0.0
-
-        for batch in train_loader:
-
-            inputs = batch["sequence_representation"].float().to(device)
-            fitness_values = batch["fitness_value"].float().to(device)
-
-            # Zero the parameter gradients
+        training_loss = 0.0
+        
+        # Iterate through batches in training data loader
+        for batch in dataloaders["train"]:
+            
+            inputs = batch["sequence_representation"].float().to(device)  # Shape: (batch_size, seq_length, embedding_dim)
+            lengths = batch["length"].to(device)
+            values = {}
+            masks = {}
+            
+            for output_feature in output_features:
+                
+                values[output_feature] = batch[f"{output_feature}_value"].float().to(device)
+                masks[output_feature] = batch[f"{output_feature}_mask"].bool().to(device)
+            
             optimiser.zero_grad()
-
-            # Forward pass
-            outputs = model(inputs)
-            loss = criterion(outputs.squeeze(), fitness_values)
-
-            # Backward pass and optimization
-            loss.backward()
+            outputs = model(inputs, lengths)
+            
+            predictions = {}
+            losses = {}
+            
+            for index, output_feature in enumerate(output_features):
+                
+                predictions[output_feature] = outputs[:, index].view(-1)
+                losses[output_feature] = torch.tensor(0.0, device=device)
+                
+                if predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
+                    
+                    losses[output_feature] = criterion(
+                        predictions[output_feature].masked_select(masks[output_feature]),
+                        values[output_feature].masked_select(masks[output_feature])
+                    )
+                    
+            total_loss = sum(losses.values())
+            total_loss.backward()
             optimiser.step()
-            running_loss += loss.item()
-
+            training_loss += total_loss.item()
+            
         # Log training loss
-        if (epoch + 1) % 1 == 0: print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {running_loss / len(train_loader)}")
-
+        if (epoch + 1) % 1 == 0:
+            
+            print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {training_loss / len(dataloaders['train'])}")
+    
+        training_loss_list.append(training_loss / len(dataloaders["train"]))
+        
         # Validation phase
-        model.eval()
-        val_loss = 0.0
+        if dataloaders["validation"] is None:
+            
+            # Early stopping check
+            average_training_loss = training_loss / len(dataloaders["train"])
 
-        with torch.no_grad():
+            if average_training_loss < best_training_loss:
+                
+                best_training_loss = average_training_loss
+                epochs_without_improvement = 0
+                best_model = model.state_dict()
 
-            for batch in val_loader:
+            else:
+                
+                epochs_without_improvement += 1
 
-                inputs = batch['sequence_representation'].float().to(device)
-                fitness_values = batch['fitness_value'].float().to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs.squeeze(), fitness_values)
-                val_loss += loss.item()
-
-        # Log validation loss
-        if (epoch + 1) % 1 == 0: print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {val_loss / len(val_loader)}")
-
-        # Early stopping check
-        avg_val_loss = val_loss / len(val_loader)
-
-        if avg_val_loss < best_val_loss:
-
-            best_val_loss = avg_val_loss
-            epochs_without_improvement = 0
-            best_model = model.state_dict()
-
+            if (epochs_without_improvement >= patience) and (epoch > min_epochs):
+                
+                print(f"Early stopping triggered after {epoch + 1} epochs")
+                break
+            
         else:
+            
+            model.eval()
+            validation_loss = 0.0
+            
+            with torch.no_grad():
+                
+                for batch in dataloaders["validation"]:
 
-            epochs_without_improvement += 1
+                    inputs = batch["sequence_representation"].float().to(device)
+                    lengths = batch["length"].to(device)
+                    values = {}
+                    masks = {}
+                    
+                    for output_feature in output_features:
+                        
+                        values[output_feature] = batch[f"{output_feature}_value"].float().to(device)
+                        masks[output_feature] = batch[f"{output_feature}_mask"].bool().to(device)
+                    
+                    outputs = model(inputs, lengths)
 
-        if epochs_without_improvement >= patience:
+                    predictions = {}
+                    losses = {}
 
-            print(f"Early stopping triggered after {epoch + 1} epochs")
-            break
+                    for index, output_feature in enumerate(output_features):
+                        
+                        predictions[output_feature] = outputs[:, index].view(-1)
+                        losses[output_feature] = torch.tensor(0.0, device=device)
+                        
+                        if predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
+                            
+                            losses[output_feature] = criterion(
+                                predictions[output_feature].masked_select(masks[output_feature]),
+                                values[output_feature].masked_select(masks[output_feature])
+                            )
+                            
+                    total_loss = sum(losses.values())
+                    validation_loss += total_loss.item()
+                        
+            # Log validation loss
+            if (epoch + 1) % 1 == 0:
+                
+                print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {validation_loss / len(dataloaders['validation'])}")
 
+            validation_loss_list.append(validation_loss / len(dataloaders["validation"]))
+            
+            # Early stopping check
+            average_validation_loss = validation_loss / len(dataloaders["validation"])
+
+            if average_validation_loss < best_validation_loss:
+                
+                best_validation_loss = average_validation_loss
+                epochs_without_improvement = 0
+                best_model = model.state_dict()
+
+            else:
+                
+                epochs_without_improvement += 1
+
+            if (epochs_without_improvement >= patience) and (epoch > min_epochs):
+                print(f"Early stopping triggered after {epoch + 1} epochs")
+                break
+            
     if best_model is not None:
+        
+        model.load_state_dict(best_model)
 
-            model.load_state_dict(best_model)
+    plot_loss(training_loss_list, validation_loss_list, results_path)
 
     return model
+
