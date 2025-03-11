@@ -10,6 +10,45 @@ import matplotlib.pyplot as plt
 #from sklearn.preprocessing import LabelEncoder
 #import umap.umap_ as umap
 
+def handle_embedding_plots(all_datasets, device, results_path):
+    
+    plot_embeddings(
+        datasets = all_datasets,
+        dim_reduction_method = "PCA",
+        n_components = 4,
+        output_attribute = "fitness_values",
+        device = device,
+        results_path = results_path,
+        label_type = "outputs"
+        )
+    plot_embeddings(
+        datasets = all_datasets,
+        dim_reduction_method = "PCA",
+        n_components = 4,
+        output_attribute = "fitness_values",
+        device = device,
+        results_path = results_path,
+        label_type = "domains"
+        )
+    plot_embeddings(
+        datasets = all_datasets,
+        dim_reduction_method = "UMAP",
+        n_components = 4,
+        output_attribute = "fitness_values",
+        device = device,
+        results_path = results_path,
+        label_type = "outputs"
+        )
+    plot_embeddings(
+        datasets = all_datasets,
+        dim_reduction_method = "UMAP",
+        n_components = 4,
+        output_attribute = "fitness_values",
+        device = device,
+        results_path = results_path,
+        label_type = "domains"
+        )
+
 def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list, results_path):
 
     for output_feature in output_features:
@@ -89,24 +128,23 @@ def plot_embeddings(
         
         labels = outputs_tensor.numpy()
         colorbar_label = output_attribute.capitalize()
-        cmap = 'coolwarm'
+        cmap = "coolwarm"
         
     elif label_type == "domains":
         
         # Encode domain names as integers
-        
         label_encoder = LabelEncoder()
         domain_labels = label_encoder.fit_transform(all_domain_names)
         labels = domain_labels
-        colorbar_label = 'Domains'
+        colorbar_label = "Domains"
         unique_domains = np.unique(domain_labels)
         n_domains = len(unique_domains)
-        cmap = plt.cm.get_cmap('tab20', n_domains)
+        cmap = plt.cm.get_cmap("tab20", n_domains)
             
     else:
         
         labels = None
-        colorbar_label = ''
+        colorbar_label = ""
         cmap = None
 
     # Apply dimensionality reduction
@@ -118,7 +156,7 @@ def plot_embeddings(
         
     elif dim_reduction_method == "UMAP":
         
-        reduced_embeddings = calculate_umap(embeddings_tensor, n_components=n_components)
+        reduced_embeddings = calculate_umap(embeddings_tensor, n_components = n_components)
         
     else:
         
@@ -133,7 +171,7 @@ def plot_embeddings(
     n_cols = int(np.ceil(np.sqrt(n_plots)))
     n_rows = int(np.ceil(n_plots / n_cols))
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows), squeeze=False)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows), squeeze = False)
 
     for idx, (i, j) in enumerate(pairs):
         
@@ -148,9 +186,9 @@ def plot_embeddings(
             s = 0.5,
             alpha = 0.8
         )
-        ax.set_xlabel(f'Component {i+1}')
-        ax.set_ylabel(f'Component {j+1}')
-        ax.set_title(f'Components {i+1} vs {j+1}')
+        ax.set_xlabel(f"Component {i+1}")
+        ax.set_ylabel(f"Component {j+1}")
+        ax.set_title(f"Components {i+1} vs {j+1}")
         
     # Remove any unused subplots
     for idx in range(n_plots, n_rows * n_cols):
@@ -163,8 +201,8 @@ def plot_embeddings(
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     fig.colorbar(sc, cax = cbar_ax, label = colorbar_label)
 
-    plt.suptitle(f'Dimensionally Reduced Embeddings ({dim_reduction_method})', fontsize=16)
-    plt.savefig(results_path / f"embedding_{output_attribute}_{dim_reduction_method}_{label_type}.png", dpi=300)
+    plt.suptitle(f"Dimensionally Reduced Embeddings ({dim_reduction_method})", fontsize = 16)
+    plt.savefig(results_path / f"embedding_{output_attribute}_{dim_reduction_method}_{label_type}.png", dpi = 300)
     plt.close()
 
     
@@ -200,11 +238,11 @@ def plot_loss(training_loss, validation_loss, results_path):
     epochs = range(1, len(training_loss) + 1)
 
     plt.figure(figsize=(10, 6))
-    plt.plot(epochs, training_loss, 'b-', label = "Training Loss")
+    plt.plot(epochs, training_loss, "b-", label = "Training Loss")
     
     if len(validation_loss) > 0:
         
-        plt.plot(epochs, validation_loss, 'r-', label = "Validation Loss")
+        plt.plot(epochs, validation_loss, "r-", label = "Validation Loss")
     
     plt.xlabel("Number of Epochs")
     plt.ylabel("Loss")
@@ -213,42 +251,3 @@ def plot_loss(training_loss, validation_loss, results_path):
     plt.grid(True)
     plt.savefig((results_path / "loss.png"))
     plt.close()
-    
-def handle_embedding_plots(all_datasets, device, results_path):
-    
-    plot_embeddings(
-        datasets = all_datasets,
-        dim_reduction_method = "PCA",
-        n_components = 4,
-        output_attribute = "fitness_values",
-        device = device,
-        results_path = results_path,
-        label_type = "outputs"
-        )
-    plot_embeddings(
-        datasets = all_datasets,
-        dim_reduction_method = "PCA",
-        n_components = 4,
-        output_attribute = "fitness_values",
-        device = device,
-        results_path = results_path,
-        label_type = "domains"
-        )
-    plot_embeddings(
-        datasets = all_datasets,
-        dim_reduction_method = "UMAP",
-        n_components = 4,
-        output_attribute = "fitness_values",
-        device = device,
-        results_path = results_path,
-        label_type = "outputs"
-        )
-    plot_embeddings(
-        datasets = all_datasets,
-        dim_reduction_method = "UMAP",
-        n_components = 4,
-        output_attribute = "fitness_values",
-        device = device,
-        results_path = results_path,
-        label_type = "domains"
-        )

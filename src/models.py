@@ -174,10 +174,14 @@ def set_up_model(
     weight_decay: float
     ):
 
-    print("MODEL")
-    print(downstream_model)
+    print("MODEL: ", downstream_model)
 
     match downstream_model:
+        
+        # Create a linear regression model - not fully implimented
+        case "LINEAR_REGRESSION":
+            
+            model = nn.Linear(input_size, output_features)
         
         # Create a feedforward neural network
         case "FFNN":

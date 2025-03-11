@@ -1,4 +1,5 @@
 {
+    "OUTPUT_FEATURES": ["fitness"],
     "EMBEDDING_MODELS" : {
         "ESM2_T6_8M_UR50D": false,
         "ESM2_T12_35M_UR50D": false,
@@ -15,12 +16,17 @@
     "EMBEDDING_LAYERS": [-1],
     "EMBEDDING_TYPES": ["MEAN"],
     "NORMALISE_EMBEDDINGS": false,
+    "EXCLUDE_WILDTYPE_INFERENCE": true,
+    "WILDTYPE_CONCAT": true,
+    "WILDTYPE_DELTA": false,
     "DOWNSTREAM_MODELS": {
+        "LINEAR_REGRESSION": false,
         "FFNN": true,
         "LSTM_UNIDIRECTIONAL": false,
         "LSTM_BIDIRECTIONAL": false,
         "GRU_UNIDIRECTIONAL": false,
-        "GRU_BIDIRECTIONAL": false
+        "GRU_BIDIRECTIONAL": false,
+        "RESIDUE_CLUSTERING": false
     },
     "DATASETS_FOR_TRAINING": ["ROCKLIN_INDELS"],
     "DATASETS_FOR_INFERENCE": ["ROCKLIN_INDELS"],
@@ -31,9 +37,9 @@
         "TESTING_SIZE": 0.2
     },
     "MODEL_ARCHITECTURE": {
-        "HIDDEN_LAYERS": [256, 2],
-        "DROPOUT_LAYERS": [0, 0, 0, 0],
-        "WEIGHT_DECAY": 0.0007,
+        "HIDDEN_LAYERS": [1000, 16],
+        "DROPOUT_LAYERS": [0, 0, 0],
+        "WEIGHT_DECAY": 0.00010,
         "ACTIVATION_FUNCTIONS": {
             "RELU": false,
             "LEAKYRELU": false,
@@ -56,7 +62,7 @@
     "TRAINING_PARAMETERS": {
         "BATCH_SIZE": 128,
         "LEARNING_RATE": 0.005,
-        "MIN_EPOCHS": 30,
+        "MIN_EPOCHS": 10,
         "MAX_EPOCHS": 100,
         "PATIENCE": 3,
         "RANDOM_STATE": 1,
@@ -81,6 +87,7 @@
         "MAGDA" : {
             "PATH" : "magda/data_main_magda.csv",
             "DOMAIN_NAME_COLUMN" : "domain",
+            "WT_FLAG_COLUMN": "",
             "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
             "ENERGY_COLUMN": "",
             "FITNESS_COLUMN" : "scaled_fitness",
@@ -91,6 +98,7 @@
         "TONI" : {
             "PATH" : "toni/data_main_toni.tsv",
             "DOMAIN_NAME_COLUMN" : "domain_ID",
+            "WT_FLAG_COLUMN": "",
             "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
             "ENERGY_COLUMN": "",
             "FITNESS_COLUMN" : "normalized_fitness",
@@ -98,60 +106,22 @@
             "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": null
         },
-        "SMALL_TONI": {
-            "PATH": "toni/data_small_toni.tsv",
-            "DOMAIN_NAME_COLUMN": "domain_ID",
-            "VARIANT_AA_SEQ_COLUMN": "aa_seq",
-            "ENERGY_COLUMN": "",
-            "FITNESS_COLUMN" : "normalized_fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": null
-        },
         "ROCKLIN" : {
-            "PATH" : "rocklin/data_with_fitness_rocklin.csv",
+            "PATH" : "rocklin/data_main_rocklin.csv",
             "DOMAIN_NAME_COLUMN" : "name",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
+            "WT_FLAG_COLUMN": "",
+            "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
             "ENERGY_COLUMN": "ddG_ML",
-            "FITNESS_COLUMN" : "fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": "."
-        },
-        "SMALL_ROCKLIN" : {
-            "PATH" : "rocklin/small_subset_with_fitness_rocklin.csv",
-            "DOMAIN_NAME_COLUMN" : "name",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
-            "ENERGY_COLUMN": "ddG_ML",
-            "FITNESS_COLUMN" : "fitness",
+            "FITNESS_COLUMN" : "",
             "IS_ENERGY_REVERSED": false,
             "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": "."
         },
         "ROCKLIN_INDELS" : {
-            "PATH" : "rocklin/indels_with_fitness_rocklin.csv",
+            "PATH" : "rocklin_indels/indels_and_wt_natural_rocklin_with_fitness_v2.csv",
             "DOMAIN_NAME_COLUMN" : "name",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
-            "ENERGY_COLUMN": "ddG_ML",
-            "FITNESS_COLUMN" : "fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": "."
-        },
-        "SMALL_ROCKLIN_INDELS" : {
-            "PATH" : "rocklin/indels_small_subset_with_fitness_rocklin.csv",
-            "DOMAIN_NAME_COLUMN" : "name",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
-            "ENERGY_COLUMN": "ddG_ML",
-            "FITNESS_COLUMN" : "fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": "."
-        },
-        "SMALL_ROCKLIN_SUBSTITUTIONS" : {
-            "PATH" : "rocklin/substitutions_small_subset_with_fitness_rocklin.csv",
-            "DOMAIN_NAME_COLUMN" : "name",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq_full",
+            "WT_FLAG_COLUMN": "wt_flag",
+            "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
             "ENERGY_COLUMN": "ddG_ML",
             "FITNESS_COLUMN" : "fitness",
             "IS_ENERGY_REVERSED": false,
@@ -161,6 +131,7 @@
         "FIREPROT" : {
             "PATH" : "fireprot/",
             "DOMAIN_NAME_COLUMN" : "",
+            "WT_FLAG_COLUMN": "",
             "VARIANT_AA_SEQ_COLUMN" : "",
             "ENERGY_COLUMN": "ddG",
             "FITNESS_COLUMN" : "",
@@ -171,6 +142,7 @@
         "VAMP_SEQ": {
             "PATH":"vamp_seq/data_main_vamp_seq.csv",
             "DOMAIN_NAME_COLUMN":"mutant",
+            "WT_FLAG_COLUMN": "",
             "VARIANT_AA_SEQ_COLUMN":"mutated_sequence",
             "ENERGY_COLUMN": "",
             "FITNESS_COLUMN":"DMS_score",
@@ -178,9 +150,21 @@
             "IS_FITNESS_REVERSED": false,
             "DROP_DOMAIN_NAME_EXTENSION": null
         },
+        "FOLDOME": {
+            "PATH":"foldome/allFitnessVariants.csv",
+            "DOMAIN_NAME_COLUMN":"domainID",
+            "WT_FLAG_COLUMN": "",
+            "VARIANT_AA_SEQ_COLUMN":"aa_seq",
+            "ENERGY_COLUMN": "",
+            "FITNESS_COLUMN":"fitness",
+            "IS_ENERGY_REVERSED": false,
+            "IS_FITNESS_REVERSED": false,
+            "DROP_DOMAIN_NAME_EXTENSION": null
+        },
         "CUSTOM": {
             "PATH":"",
             "DOMAIN_NAME_COLUMN":"",
+            "WT_FLAG_COLUMN": "",
             "VARIANT_AA_SEQ_COLUMN":"",
             "ENERGY_COLUMN": "",
             "FITNESS_COLUMN":"",

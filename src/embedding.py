@@ -11,8 +11,9 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModel, AutoTokenizer, EsmModel, EsmForProteinFolding, EsmTokenizer
 
 # Local modules
-from helpers import concatenate_embeddings, normalise_embeddings, fit_principal_components, compute_dataset_hash
+from helpers import concatenate_embeddings, normalise_embeddings, fit_principal_components, compute_dataset_hash, concat_wildtype_embeddings
 from config_loader import config
+from latent_space import find_latent_distance_to_stable_point
 
 def load_embeddings(
     datasets_dict: dict,
@@ -90,6 +91,11 @@ def load_embeddings(
             embeddings_list = normalise_embeddings(embeddings_list)
 
         dataset.sequence_representations = concatenate_embeddings(embeddings_list)
+        
+        if config["WILDTYPE_CONCAT"]:
+            
+            dataset = concat_wildtype_embeddings(dataset)
+        
         datasets_dict["all"][dataset_name] = dataset
 
     # Fetch arbitrary dataset to check shape, should all be the same so order does not matter
@@ -182,17 +188,15 @@ def fetch_embeddings(
 
     with torch.no_grad():
 
+        print("Using embedding type: ", embedding_type)
+
         for batch_idx, batch in enumerate(dataloader):
 
             sequences = batch["variant_aa_seq"]
-            inputs = tokeniser(sequences, padding = True, truncation = True, return_tensors = "pt", max_length = 1024)
-            inputs = inputs["input_ids"].to(device)
-            model = model.to(device)
-            output = model(inputs, output_hidden_states = True)
-            batch_embeddings = output.hidden_states[embedding_layer]
 
             if embedding_type == "RAW":
                 
+                batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = []
                 
                 for seq_idx, seq in enumerate(batch["variant_aa_seq"]):
@@ -202,37 +206,47 @@ def fetch_embeddings(
                     pooled_batch_embeddings.append(seq_embeddings)
 
             elif embedding_type == "MEAN":
-
+                
+                batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = batch_embeddings.mean(dim = 1).float().cpu()
 
             elif embedding_type == "MAX":
 
+                batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = batch_embeddings.max(dim = 1).values.cpu()
 
             elif embedding_type == "MIN":
 
+                batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = batch_embeddings.min(dim = 1).values.cpu()
 
             elif embedding_type == "STD":
 
+                batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = batch_embeddings.std(dim = 1).float().cpu()
 
             elif embedding_type == "PC1":
 
+                batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = fit_principal_components(batch_embeddings, 1, device).cpu()
 
             elif embedding_type == "PC2":
 
+                batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = fit_principal_components(batch_embeddings, 2, device).cpu()
 
             elif embedding_type == "PC3":
 
+                batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = fit_principal_components(batch_embeddings, 3, device).cpu()
 
-            elif embedding_type == "LDSP":
+            elif embedding_type == "LDSP":  # Latent Distance to Stable Point
                 
-                # Not yet implemented
-                pooled_batch_embeddings = find_latent_distance_to_stable_point(batch_embeddings).cpu()
+                pooled_batch_embeddings = find_latent_distance_to_stable_point(sequences, model, tokeniser, device, embedding_layer).cpu()
+
+            elif embedding_type == "WT_COMBO":
+                
+                pass
 
             else:
 
@@ -247,3 +261,14 @@ def fetch_embeddings(
     print("Fetching embeddings complete!")
 
     return full_embeddings
+
+def fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer):
+    
+    inputs = tokeniser(sequences, padding = True, truncation = True, return_tensors = "pt", max_length = 1024)
+    input_ids = inputs["input_ids"].to(device)
+    attention_mask = inputs["attention_mask"].to(device)
+    model = model.to(device)
+    output = model(input_ids, attention_mask = attention_mask, output_hidden_states = True)
+    batch_embeddings = output.hidden_states[embedding_layer]
+    
+    return batch_embeddings

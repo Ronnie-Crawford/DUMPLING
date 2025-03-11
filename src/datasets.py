@@ -1,5 +1,6 @@
 # Standard modules
 import csv
+from distutils.util import strtobool
 
 # Third-party modules
 import torch
@@ -7,13 +8,14 @@ from torch.utils.data import Dataset
 
 # Local modules
 from config_loader import config
-from helpers import truncate_domain, is_valid_sequence, is_tensor_ready
+from helpers import truncate_domain, is_valid_sequence, is_tensor_ready, filter_domains_with_one_wt
 
 class ProteinDataset(Dataset):
 
     def __init__(
         self,
         domain_names: list,
+        wt_flags: list,
         variant_aa_seqs: list,
         energy_values: list,
         fitness_values: list,
@@ -23,6 +25,7 @@ class ProteinDataset(Dataset):
         ):
         
         self.domain_names = domain_names
+        self.wt_flags = wt_flags
         self.variant_aa_seqs = variant_aa_seqs
         self.energy_values = energy_values
         self.fitness_values = fitness_values
@@ -37,6 +40,7 @@ class ProteinDataset(Dataset):
         cls,
         path: str,
         domain_name_column: str,
+        wt_flag_column: str,
         aa_seq_column: str,
         energy_column: str,
         fitness_column: str,
@@ -71,7 +75,15 @@ class ProteinDataset(Dataset):
                 reader = csv.DictReader(data_file, delimiter = delimiter)
                 rows = list(reader)
 
-                # If no energy or fitness column given, mask out their values as unknown
+                # If no column given, mask out values as unknown
+                if wt_flag_column == "":
+                    
+                    for row in rows:
+                        
+                        row["wt_flags"] = False
+                    
+                    wt_flag_column = "wt_flags"
+                
                 if energy_column == "":
 
                     for row in rows:
@@ -115,15 +127,14 @@ class ProteinDataset(Dataset):
                     and is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"]))
                 ]
 
-                domain_names, variant_aa_seqs, energy_values, fitness_values, energy_mask, fitness_mask = zip(*((
-                    truncate_domain(
-                        str(row[domain_name_column]),
-                        domain_name_splitter),
-                        str(row[aa_seq_column]),
-                        float(row[energy_column]),
-                        float(row[fitness_column]),
-                        bool(row["energy_mask"]),
-                        bool(row["fitness_mask"])
+                domain_names, wt_flags, variant_aa_seqs, energy_values, fitness_values, energy_mask, fitness_mask = zip(*((
+                    truncate_domain(str(row[domain_name_column]), domain_name_splitter),
+                    bool(strtobool(row[wt_flag_column].strip())),
+                    str(row[aa_seq_column]),
+                    float(row[energy_column]),
+                    float(row[fitness_column]),
+                    bool(row["energy_mask"]),
+                    bool(row["fitness_mask"])
                     ) for row in filtered_rows if is_valid_sequence(
                         str(row[aa_seq_column]),
                         str(config["AMINO_ACIDS"])
@@ -133,7 +144,7 @@ class ProteinDataset(Dataset):
                                 float(row[fitness_column])
                                 )))
 
-                sequence_representations = [torch.zeros(0) for _ in range(len(domain_names))]
+                sequence_representations = [torch.zeros(0) for _index in range(len(domain_names))]
 
                 # Apply reversals if needed
                 if energy_reversal:
@@ -146,6 +157,7 @@ class ProteinDataset(Dataset):
             
             return cls(
                 list(domain_names),
+                list(wt_flags),
                 list(variant_aa_seqs),
                 list(energy_values),
                 list(fitness_values),
@@ -182,6 +194,7 @@ class ProteinDataset(Dataset):
         """
 
         domain_name = self.domain_names[index]
+        wt_flag = self.wt_flags[index]
         variant_aa_seq = self.variant_aa_seqs[index].replace("*", "<unk>")
         energy_value = self.energy_values[index]
         fitness_value = self.fitness_values[index]
@@ -191,6 +204,7 @@ class ProteinDataset(Dataset):
 
         variant = {
             "domain_name": domain_name,
+            "wt_flag": wt_flag,
             "variant_aa_seq": variant_aa_seq,
             "energy_value": energy_value,
             "fitness_value": fitness_value,
@@ -209,6 +223,7 @@ class ProteinDataset(Dataset):
         
         return ProteinDataset(
             [self.domain_names[i] for i in keep_indices],
+            [self.wt_flags[i] for i in keep_indices],
             [self.variant_aa_seqs[i] for i in keep_indices],
             [self.energy_values[i] for i in keep_indices],
             [self.fitness_values[i] for i in keep_indices],
@@ -235,6 +250,7 @@ def get_datasets(all_datasets: list, package_folder) -> list:
             dataset = ProteinDataset.from_file(
                     package_folder / "data" / config["DATASETS"][dataset_name]["PATH"],
                     config["DATASETS"][dataset_name]["DOMAIN_NAME_COLUMN"],
+                    config["DATASETS"][dataset_name]["WT_FLAG_COLUMN"],
                     config["DATASETS"][dataset_name]["VARIANT_AA_SEQ_COLUMN"],
                     config["DATASETS"][dataset_name]["ENERGY_COLUMN"],
                     config["DATASETS"][dataset_name]["FITNESS_COLUMN"],
@@ -242,6 +258,10 @@ def get_datasets(all_datasets: list, package_folder) -> list:
                     config["DATASETS"][dataset_name]["IS_FITNESS_REVERSED"],
                     config["DATASETS"][dataset_name]["DROP_DOMAIN_NAME_EXTENSION"]
                 )
+        
+            if config["FILTER_ONE_WILDTYPE_PER_DOMAIN"]:
+        
+                dataset = filter_domains_with_one_wt(dataset)
 
         except Exception as error: raise Exception(f"Could not initialise dataset: {dataset_name}")
 

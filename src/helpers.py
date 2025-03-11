@@ -6,6 +6,7 @@ from pathlib import Path
 import datetime
 import shutil
 import hashlib
+import random
 
 # Third-party modules
 import numpy as np
@@ -450,3 +451,151 @@ def splits_to_loaders(splits: dict, batch_size: int, n_workers: int) -> dict:
     }
 
     return dataloaders
+
+def get_mutants(sequence, vocab, search_breadth, search_depth = 1):
+
+    mutant_sequences = [sequence]
+
+    for _search in range(search_depth):
+
+        mutants_found_this_layer = []
+
+        for sequence in mutant_sequences:
+
+            mutants_found_this_layer.extend(get_adjacent_mutants(sequence, vocab, search_breadth))
+
+        mutant_sequences.extend(mutants_found_this_layer)
+
+    return mutant_sequences
+
+def get_adjacent_mutants(sequence, vocab, search_breadth):
+
+    mutant_sequences = []
+
+    for _search in range(search_breadth):
+
+        mutant_sequences.append(str(mutate_sequence(str(sequence), list(vocab.keys()))))
+
+    return mutant_sequences
+
+def mutate_sequence(sequence, vocab):
+
+    index = random.randint(0, len(sequence) - 1)
+    mutation = random.choice(["deletion", "substitution", "insertion"])
+
+    if mutation == "deletion":
+
+        sequence = sequence[:index] + sequence[index + 1:]
+
+    elif mutation == "substitution":
+
+        new_token = random.choice(vocab)
+        sequence = sequence[:index] + new_token + sequence[index + 1:]
+
+    elif mutation == "insertion":
+
+        new_token = random.choice(vocab)
+        sequence = sequence[:index] + new_token + sequence[index:]
+
+    return sequence
+
+#def get_wt_sequence_for_domain(domain_name: str, dataset: ProteinDataset) -> str:
+    
+    """
+    Returns the WT sequence for a given domain.
+    Assumes there is exactly one sequence flagged as WT per domain.
+    """
+    
+#    wild_type_sequences = []
+    
+#    for index, quuery_domain_name in enumerate(dataset.domain_names):
+        
+#        if domain_name == quuery_domain_name and dataset.wt_flags[index]:
+            
+#            wild_type_sequences.append(dataset.variant_aa_seqs[index])
+        
+#    assert len(wild_type_sequences) == 1
+    
+#    return wild_type_sequences[0]
+
+def check_one_wt_per_domain(dataset):
+    
+    for domain_name in set(dataset.domain_names):
+        
+        wts_in_domain = 0
+        
+        for index, query_domain in enumerate(dataset.domain_names):
+            
+            if query_domain == domain_name and dataset.wt_flags[index]:
+
+                wts_in_domain += 1
+        
+        if wts_in_domain != 1:
+            
+            raise ValueError(f"Domain '{domain_name}' has {wts_in_domain} WT sequences.")
+    
+    print("Checked WTs successfully.")
+
+def filter_domains_with_one_wt(dataset):
+    
+    domain_total = {}
+    domain_wt = {}
+    
+    for i, domain in enumerate(dataset.domain_names):
+        
+        domain_total[domain] = domain_total.get(domain, 0) + 1
+        
+        if dataset.wt_flags[i]:
+            
+            domain_wt[domain] = domain_wt.get(domain, 0) + 1
+
+    valid_domains = {domain for domain in domain_total if domain_wt.get(domain, 0) == 1}
+    dropped_domains = set(domain_total.keys()) - valid_domains
+
+    print(f"Total domains: {len(domain_total)}")
+    print(f"Valid domains (exactly one WT): {len(valid_domains)}")
+    print(f"Dropped domains: {len(dropped_domains)}")
+
+    # Build a list of indices to keep (only rows belonging to valid domains)
+    keep_indices = [i for i, domain in enumerate(dataset.domain_names) if domain in valid_domains]
+    
+    # Use the dataset's filtering method to return a new, filtered dataset.
+    return dataset.filter_by_indices(keep_indices)
+
+def concat_wildtype_embeddings(dataset):
+    
+    domain_to_wt = {}
+    new_representations = []
+    
+    for index, domain in enumerate(dataset.domain_names):
+        
+        if dataset.wt_flags[index]:
+            
+            domain_to_wt[domain] = dataset.sequence_representations[index]
+    
+    for index, domain in enumerate(dataset.domain_names):
+        
+        concatinated_embedding = torch.cat((dataset.sequence_representations[index], domain_to_wt.get(domain)), dim = 0)
+        new_representations.append(concatinated_embedding)
+    
+    dataset.sequence_representations = new_representations
+    
+    return dataset
+
+def remove_wt_from_split(split):
+    
+    if split is not []:
+        
+        filtered_split = []
+        
+        for dataset in split:
+    
+            keep_indices = [index for index, wt_flag in enumerate(dataset.wt_flags) if not wt_flag]
+            filtered_dataset = dataset.filter_by_indices(keep_indices)
+            filtered_split.append(filtered_dataset)
+        
+        return filtered_split
+    
+    else:
+        
+        return []

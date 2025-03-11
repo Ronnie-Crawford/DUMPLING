@@ -109,7 +109,7 @@ def train_ffnn_from_embeddings(
             for index, output_feature in enumerate(output_features):
                 
                 predictions[output_feature] = outputs[:, index].view(-1)
-                losses[output_feature] = torch.tensor(0.0, device=device)
+                losses[output_feature] = torch.tensor(0.0, device = device)
                 
                 if predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
                     

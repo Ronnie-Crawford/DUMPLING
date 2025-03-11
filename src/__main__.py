@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 # Local modules
 from config_loader import config
-from helpers import get_device, setup_folders, get_results_path, get_homology_path, remove_homologous_sequences_from_inference, concat_splits, splits_to_loaders
+from helpers import get_device, setup_folders, get_results_path, get_homology_path, remove_homologous_sequences_from_inference, concat_splits, splits_to_loaders, remove_wt_from_split
 from preprocessing import pad_variable_length_sequences
 from embedding import load_embeddings
 from datasets import get_datasets
@@ -38,7 +38,7 @@ def main(
         - tune (str): The value of the tune flag, if any.
     """
 
-    output_features = ["fitness"]
+    output_features = config["OUTPUT_FEATURES"]
 
     flags_dict = {
         "device": device_flag,
@@ -99,8 +99,8 @@ def handle_data(config: dict, flags_dict: dict, paths_dict: dict):
     
     if flags_dict["splits"] == "homologous-aware":
 
-        new_handle_homology(datasets_dict, paths_dict["homology"])
-        #handle_homology(datasets_dict, paths_dict["homology"])
+        #new_handle_homology(datasets_dict, paths_dict["homology"])
+        handle_homology(datasets_dict, paths_dict["homology"])
     
     return datasets_dict, paths_dict
 
@@ -182,13 +182,20 @@ def handle_dataloading(
     splits_dict = handle_splits_flag(flags_dict["splits"], datasets_dict, paths_dict["homology"])
     
     splits_dict["inference"] = datasets_dict["inference_only"]
+
+    if config["EXCLUDE_WILDTYPE_INFERENCE"]:
+        
+        for split in ["validation", "test", "inference"]:
+            
+            splits_dict[split] = remove_wt_from_split(splits_dict[split])
+    
     splits_dict = concat_splits(splits_dict)
 
     # Load data into dataloaders
     dataloaders_dict = splits_to_loaders(
         splits_dict,
         batch_size = config["TRAINING_PARAMETERS"]["BATCH_SIZE"],
-        n_workers = config["TRAINING_PARAMETERS"]["N_WORKERS"]
+        n_workers = config["TRAINING_PARAMETERS"]["N_WORKERS"],
     )
 
     return dataloaders_dict
