@@ -1,39 +1,37 @@
 # Standard modules
 import csv
 from distutils.util import strtobool
+from functools import partial
 
 # Third-party modules
 import torch
 from torch.utils.data import Dataset
 
 # Local modules
-from config_loader import config
-from helpers import truncate_domain, is_valid_sequence, is_tensor_ready, filter_domains_with_one_wt
+from helpers import truncate_domain, is_valid_sequence, is_tensor_ready, filter_domains_with_one_wt, get_homology_path
+from homology import handle_homology
 
 class ProteinDataset(Dataset):
-
     def __init__(
         self,
         domain_names: list,
         wt_flags: list,
-        variant_aa_seqs: list,
-        energy_values: list,
-        fitness_values: list,
-        energy_mask: list,
-        fitness_mask: list,
-        sequence_representations: list,
-        ):
-        
+        aa_seqs: list,
+        sequence_embeddings: list,
+        predicted_features: list,
+        feature_values: dict,
+        feature_masks: dict,
+        labels: dict
+    ):
         self.domain_names = domain_names
         self.wt_flags = wt_flags
-        self.variant_aa_seqs = variant_aa_seqs
-        self.energy_values = energy_values
-        self.fitness_values = fitness_values
-        self.energy_mask = energy_mask
-        self.fitness_mask = fitness_mask
-        self.sequence_representations = sequence_representations
-        
-        print(f"Initialised dataset of length {len(self)}")
+        self.aa_seqs = aa_seqs
+        self.sequence_embeddings = sequence_embeddings
+        self.predicted_features = predicted_features
+        self.feature_values = feature_values
+        self.feature_masks = feature_masks
+        self.labels = labels
+        print(f"Initialized dataset with {len(self)} sequences and features: {self.predicted_features}")
 
     @classmethod
     def from_file(
@@ -42,229 +40,249 @@ class ProteinDataset(Dataset):
         domain_name_column: str,
         wt_flag_column: str,
         aa_seq_column: str,
-        energy_column: str,
-        fitness_column: str,
-        energy_reversal: bool,
-        fitness_reversal: bool,
-        domain_name_splitter: str
-        ):
-
-        """
-        Set up PyTorch dataset by reading in
-
-        Parameters:
-            - path (str): Path to the csv/tsv file containing the dataset.
-            - domain_name_column (str): The name of the column which contains the unique domain identifiers for each domain.
-            - aa_seq_column (str): The name of the column which contains the unique amino acid sequences for each variant.
-            - energy_column (str): The name of the column which contains the energy measurement for each variant.
-            - fitness_column (str): The name of the column which contains the fitness measurement for each variant.
-            - domain_name_splitter (str): The substring which can be used to remove the suffix of the values in the domain name column.
-        """
-
-        try:
-
-            # Detect delimiter by reading the first line of the file.
-            with open(path, mode = "r") as data_file:
-
-                first_line = data_file.readline()
-                delimiter = "," if first_line.count(",") > first_line.count("\t") else "\t"
-
-            # Reopen file and read columns of data in
-            with open(path, mode = "r") as data_file:
-
-                reader = csv.DictReader(data_file, delimiter = delimiter)
-                rows = list(reader)
-
-                # If no column given, mask out values as unknown
-                if wt_flag_column == "":
-                    
-                    for row in rows:
-                        
-                        row["wt_flags"] = False
-                    
-                    wt_flag_column = "wt_flags"
-                
-                if energy_column == "":
-
-                    for row in rows:
-
-                        row["energy_values"] = False
-
-                    energy_column = "energy_values"
-
-                if fitness_column == "":
-
-                    for row in rows:
-
-                        row["fitness_values"] = False
-
-                    fitness_column = "fitness_values"
-
-                # Also mask out any values in given columns that are not parsable
-                for row in rows:
-
-                    if is_tensor_ready(row[energy_column]):
-
-                        row["energy_mask"] = True
-
-                    else:
-
-                        row[energy_column] = 0.0
-                        row["energy_mask"] = False
-
-                    if is_tensor_ready(row[fitness_column]):
-
-                        row["fitness_mask"] = True
-
-                    else:
-
-                        row[fitness_column] = 0.0
-                        row["fitness_mask"] = False
-
-                filtered_rows = [
-                    row for row in rows
-                    if (bool(row["energy_mask"]) or bool(row["fitness_mask"]))
-                    and is_valid_sequence(str(row[aa_seq_column]), str(config["AMINO_ACIDS"]))
-                ]
-
-                domain_names, wt_flags, variant_aa_seqs, energy_values, fitness_values, energy_mask, fitness_mask = zip(*((
-                    truncate_domain(str(row[domain_name_column]), domain_name_splitter),
-                    bool(strtobool(row[wt_flag_column].strip())),
-                    str(row[aa_seq_column]),
-                    float(row[energy_column]),
-                    float(row[fitness_column]),
-                    bool(row["energy_mask"]),
-                    bool(row["fitness_mask"])
-                    ) for row in filtered_rows if is_valid_sequence(
-                        str(row[aa_seq_column]),
-                        str(config["AMINO_ACIDS"])
-                        ) and is_tensor_ready(
-                            float(row[energy_column])
-                            ) and is_tensor_ready(
-                                float(row[fitness_column])
-                                )))
-
-                sequence_representations = [torch.zeros(0) for _index in range(len(domain_names))]
-
-                # Apply reversals if needed
-                if energy_reversal:
-                    
-                    energy_values = tuple(-x for x in energy_values)
-                    
-                if fitness_reversal:
-                    
-                    fitness_values = tuple(-x for x in fitness_values)
+        predicted_feature_columns: dict,
+        label_columns: dict,
+        amino_acids: str,
+    ):
+        # Detect delimiter
+        with open(path, 'r') as f:
             
-            return cls(
-                list(domain_names),
-                list(wt_flags),
-                list(variant_aa_seqs),
-                list(energy_values),
-                list(fitness_values),
-                list(energy_mask),
-                list(fitness_mask),
-                sequence_representations
-            )
+            first = f.readline()
+            delim = ',' if first.count(',') > first.count('\t') else '\t'
 
-        except FileNotFoundError: raise FileNotFoundError(f"File {path} not found while initialising dataset.")
-        except ValueError as error: raise ValueError(f"Error processing {path} while initialising dataset: {error}.")
-        except Exception as error: raise Exception(f"Error processing {path} while initialising dataset: {error}.")
+        with open(path, 'r') as f:
+            
+            reader = csv.DictReader(f, delimiter=delim)
+            rows = list(reader)
 
-    def __len__(self) -> int:
+        # Default wt flags
+        if not wt_flag_column:
+            
+            for r in rows:
+                r['wt_flag'] = False
+            wt_flag_column = 'wt_flag'
 
-        """
-        Returns the length of the dataset.
-
-        Returns:
-            - length (int): The number of items in the dataset.
-        """
-
-        return len(self.variant_aa_seqs)
-
-    def __getitem__(self, index: int) -> dict:
-
-        """
-        Returns the item in the dataset at the given index.
-
-        Parameters:
-            - index (int): The index of the item to return, zero-indexed.
-
-        Returns:
-            - variant (dict): A dictionary of the values of the variant selected via the indexing.
-        """
-
-        domain_name = self.domain_names[index]
-        wt_flag = self.wt_flags[index]
-        variant_aa_seq = self.variant_aa_seqs[index].replace("*", "<unk>")
-        energy_value = self.energy_values[index]
-        fitness_value = self.fitness_values[index]
-        energy_mask = self.energy_mask[index]
-        fitness_mask = self.fitness_mask[index]
-        sequence_representation = self.sequence_representations[index]
-
-        variant = {
-            "domain_name": domain_name,
-            "wt_flag": wt_flag,
-            "variant_aa_seq": variant_aa_seq,
-            "energy_value": energy_value,
-            "fitness_value": fitness_value,
-            "energy_mask": energy_mask,
-            "fitness_mask": fitness_mask,
-            "sequence_representation": sequence_representation
-        }
-
-        return variant
-    
-    def filter_by_indices(self, keep_indices):
+        # Build value and mask dicts
+        feature_values = {feat: [] for feat in predicted_feature_columns}
+        feature_masks  = {feat: [] for feat in predicted_feature_columns}
         
-        """
-        Returns a new ProteinDataset instance with data filtered by keep_indices.
-        """
+        labels = {label: [] for label in label_columns}
+
+        domain_names, wt_flags, aa_seqs = [], [], []
         
-        return ProteinDataset(
-            [self.domain_names[i] for i in keep_indices],
-            [self.wt_flags[i] for i in keep_indices],
-            [self.variant_aa_seqs[i] for i in keep_indices],
-            [self.energy_values[i] for i in keep_indices],
-            [self.fitness_values[i] for i in keep_indices],
-            [self.energy_mask[i] for i in keep_indices],
-            [self.fitness_mask[i] for i in keep_indices],
-            [self.sequence_representations[i] for i in keep_indices],
+        for row in rows:
+            
+            seq = row[aa_seq_column]
+            
+            if not is_valid_sequence(seq, amino_acids):
+                
+                continue
+
+            # Determine masks and values
+            
+            keep = False
+            values = {}
+            masks = {}
+            
+            for feature, column in predicted_feature_columns.items():
+                
+                # Explicitly ignore empty column names
+                if column == "":
+                    
+                    value = 0.0
+                    mask = False
+                    
+                else:
+                    
+                    raw = row.get(column, "")
+                    
+                    if raw != "" and is_tensor_ready(raw):
+                        
+                        value = float(raw)
+                        mask = True
+                        
+                    else:
+                        
+                        value = 0.0
+                        mask = False
+                            
+                values[feature] = value
+                masks[feature] = mask
+                            
+                if mask:
+                    
+                    keep = True
+
+            if not keep:
+                
+                continue
+
+            # collect
+            domain_names.append(row[domain_name_column])
+            wt_flags.append(bool(strtobool(row[wt_flag_column].strip())))
+            aa_seqs.append(seq)
+            
+            for feature in predicted_feature_columns:
+                
+                feature_values[feature].append(values[feature])
+                feature_masks[feature].append(masks[feature])
+            
+            for label, label_config in label_columns.items():
+                
+                column_name = label_config["COLUMN_NAME"]
+                labels[label].append(bool(strtobool(row[column_name].strip())) if column_name else False)
+
+        # Initialise zero embeddings - placeholder for later
+        sequence_embeddings = [torch.zeros(0) for _ in domain_names]
+
+        return cls(
+            domain_names,
+            wt_flags,
+            aa_seqs,
+            sequence_embeddings,
+            list(predicted_feature_columns.keys()),
+            feature_values,
+            feature_masks,
+            labels
         )
 
-def get_datasets(all_datasets: list, package_folder) -> list:
-
-    """
-    Sets up the dataset with the given name using the ProteinDataset class.
-
-    Returns:
-        - datasets (ProteinDataset): A list of datasets that have been initialised.
-    """
-
-    datasets = []
-
-    for dataset_name in all_datasets:
-
-        try:
-
-            dataset = ProteinDataset.from_file(
-                    package_folder / "data" / config["DATASETS"][dataset_name]["PATH"],
-                    config["DATASETS"][dataset_name]["DOMAIN_NAME_COLUMN"],
-                    config["DATASETS"][dataset_name]["WT_FLAG_COLUMN"],
-                    config["DATASETS"][dataset_name]["VARIANT_AA_SEQ_COLUMN"],
-                    config["DATASETS"][dataset_name]["ENERGY_COLUMN"],
-                    config["DATASETS"][dataset_name]["FITNESS_COLUMN"],
-                    config["DATASETS"][dataset_name]["IS_ENERGY_REVERSED"],
-                    config["DATASETS"][dataset_name]["IS_FITNESS_REVERSED"],
-                    config["DATASETS"][dataset_name]["DROP_DOMAIN_NAME_EXTENSION"]
-                )
+    def __len__(self):
         
-            if config["FILTER_ONE_WILDTYPE_PER_DOMAIN"]:
+        return len(self.aa_seqs)
+
+    def __getitem__(self, idx: int) -> dict:
         
-                dataset = filter_domains_with_one_wt(dataset)
+        item = {
+            "domain_name": self.domain_names[idx],
+            "wt_flag": self.wt_flags[idx],
+            "aa_seq": self.aa_seqs[idx].replace('*', '<unk>'),
+            "sequence_embedding": self.sequence_embeddings[idx]
+        }
+        
+        for feat in self.predicted_features:
+            
+            item[f"{feat}_value"] = torch.tensor(self.feature_values[feat][idx])
+            item[f"{feat}_mask"]  = torch.tensor(self.feature_masks [feat][idx])
+        
+        for label_name in self.labels:
+            
+            item[label_name] = torch.tensor(self.labels[label_name][idx])
+            
+        return item
 
-        except Exception as error: raise Exception(f"Could not initialise dataset: {dataset_name}")
+    def filter_by_indices(self, indices: list) -> "ProteinDataset":
+        
+        print("Starting filter by indices")
+        kwargs = {
+            "domain_names": [self.domain_names[i] for i in indices],
+            "wt_flags": [self.wt_flags[i] for i in indices],
+            "aa_seqs": [self.aa_seqs[i] for i in indices],
+            "sequence_embeddings": [self.sequence_embeddings[i] for i in indices],
+            "predicted_features": self.predicted_features,
+            "feature_values": {feat: [self.feature_values[feat][i] for i in indices] for feat in self.predicted_features},
+            "feature_masks":  {feat: [self.feature_masks [feat][i] for i in indices] for feat in self.predicted_features},
+            "labels": {label: [self.labels[label][i] for i in indices] for label in self.labels}
+        }
+        
+        return type(self)(**kwargs)
+    
+    def filter_by_label(self, label_name: str, keep_wts: bool = True) -> "ProteinDataset":
+        
+        indices = [index for index, value in enumerate(self.labels[label_name]) if value]
+        
+        indices = []
+        
+        for i, label_flag in enumerate(self.labels.get(label_name, [])):
+            
+            if label_flag or (keep_wts and self.wt_flags[i]):
+                
+                indices.append(i)
+                
+        return self.filter_by_indices(indices)
 
-        datasets.append(dataset)
+def handle_data(
+    base_path: str,
+    datasets_in_use: list[tuple],
+    datasets_config_dict: dict,
+    is_filter_one_wildtype_per_domain: bool,
+    predicted_features: list,
+    amino_acids: str
+    ) -> dict:
+    
+    # Set up datasets
+    dataset_dicts = []
+    
+    for dataset_name, label in datasets_in_use:
+            
+        feature_column_mapping = {
+            feature: datasets_config_dict[dataset_name]["PREDICTED_FEATURE_COLUMNS"].get(feature, "")
+            for feature in predicted_features
+        }
+        label_column_mapping = datasets_config_dict[dataset_name]["LABEL_COLUMNS"]
+            
+        dataset = ProteinDataset.from_file(
+            base_path / datasets_config_dict[dataset_name]["PATH"],
+            datasets_config_dict[dataset_name]["DOMAIN_NAME_COLUMN"],
+            datasets_config_dict[dataset_name]["WT_FLAG_COLUMN"],
+            datasets_config_dict[dataset_name]["AA_SEQ_COLUMN"],
+            feature_column_mapping,
+            label_column_mapping,
+            amino_acids
+            )
+    
+        if is_filter_one_wildtype_per_domain:
+    
+            dataset = filter_domains_with_one_wt(dataset)
+        
+        dataset_dicts.append({
+            "dataset_name": dataset_name,
+            "dataset": dataset,
+            "label": label,
+            "unique_key": f"{dataset_name}-{label}"
+            })
+        
+    return dataset_dicts
 
-    return datasets
+def make_spoof_train_dataset(
+    train_sequence_list: list[str],
+    predicted_features: list[str]
+) -> ProteinDataset:
+    
+    """
+    Build a ProteinDataset containing only the given sequences,
+    with dummy values for all other fields.
+    """
+    
+    # Dummy domain names (we won't use them in filtering)
+    domain_names = ["" for _ in range(len(train_sequence_list))]
+    wt_flags = [False] * len(train_sequence_list)
+    sequence_embeddings = [torch.zeros(0) for _ in range(len(train_sequence_list))]
+
+    # One dict entry per predicted feature, all zeros
+    feature_values = { feat: [0.0] * len(train_sequence_list) for feat in predicted_features }
+    # All masks False (so no real values; doesn’t matter for filter)
+    feature_masks  = { feat: [False] * len(train_sequence_list) for feat in predicted_features }
+    labels = {label: [False] * len(train_sequence_list) for label in labels_list or []}
+
+
+    return ProteinDataset(
+        domain_names,
+        wt_flags,
+        train_sequence_list,
+        sequence_embeddings,
+        predicted_features,
+        feature_values,
+        feature_masks
+    )
+
+def handle_filtering(dataset_dicts):
+
+    for index, dataset_dict in enumerate(dataset_dicts):
+        
+        if dataset_dict["label"] != "ALL":
+            
+            dataset_dict["dataset"] = dataset_dict["dataset"].filter_by_label(dataset_dict["label"])
+    
+        dataset_dicts[index] = dataset_dict
+
+    return dataset_dicts

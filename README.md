@@ -2,11 +2,12 @@
 
 The goal of this project is to explore how different architectures and how different datasets, and features of datasets, impact the accuracy of predicting fitness and stability of protein domains.
 
-Currently 2 architectures have been tried:
+Current architectures that have been tried:
 
 - An RNN autoencoder to represent a sequence, with a downstream fitness predictor.
 - ESM2 embeddings with downstream stability prediction module.
 - AMPLIFY embeddings with downstream prediction module.
+
 ## Environment
 
 You can set up the environment for this package using conda using the command: ```conda env create -f environment.yml```.

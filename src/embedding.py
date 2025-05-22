@@ -11,25 +11,67 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModel, AutoTokenizer, EsmModel, EsmForProteinFolding, EsmTokenizer
 
 # Local modules
-from helpers import concatenate_embeddings, normalise_embeddings, fit_principal_components, compute_dataset_hash, concat_wildtype_embeddings
-from config_loader import config
-from latent_space import find_latent_distance_to_stable_point
+from helpers import concatenate_embeddings, normalise_embeddings, fit_principal_components, compute_dataset_hash, concat_wildtype_embeddings, find_wildtype_delta
+#from latent_space import find_latent_distance_to_stable_point
+
+def handle_embeddings(
+    embedding_model_names: list,
+    batch_size: int,
+    embedding_layers: list,
+    embedding_types: list,
+    dimensional_reduction_method: str,
+    n_desired_dimensions: int,
+    wildtype_concat: bool,
+    wildtype_delta: bool,
+    downstream_models: list,
+    dataset_dicts: list,
+    device: str,
+    base_path,
+    n_workers: int
+    ):
+
+    dataset_dicts, embedding_size = load_embeddings(
+        dataset_dicts,
+        batch_size,
+        embedding_model_names,
+        embedding_layers,
+        embedding_types,
+        device,
+        base_path,
+        normalise_embeddings,
+        wildtype_concat,
+        wildtype_delta,
+        n_workers
+        )
+    
+    if dimensional_reduction_method != "None":
+    
+        dataset_dicts = handle_dimensional_reduction(dataset_dicts, n_desired_dimensions)
+        embedding_size = n_desired_dimensions
+    
+    return dataset_dicts, embedding_size
 
 def load_embeddings(
-    datasets_dict: dict,
+    dataset_dicts: dict,
     batch_size: int,
     model_selections: list,
     embedding_layers: list,
     embedding_types: list,
     device: str,
-    package_folder: Path
+    package_folder: Path,
+    normalise_embeddings: bool,
+    wildtype_concat: bool,
+    wildtype_delta: bool,
+    n_workers: int
 ) -> tuple[list, int]:
     
     embedding_combinations = list(itertools.product(model_selections, embedding_layers, embedding_types))
     merged_embeddings_df = pd.DataFrame()
     
-    for dataset_name, dataset in datasets_dict["all"].items():
+    for index, dataset_dict in enumerate(dataset_dicts):
         
+        dataset_name = dataset_dict["dataset_name"]
+        dataset = dataset_dict["dataset"]
         embeddings_list = []
         dataset_hash = compute_dataset_hash(dataset)
         
@@ -48,12 +90,12 @@ def load_embeddings(
                 embeddings = torch.load(embedding_tensor_path, map_location = "cpu")
 
                 # Load metadata
-                with open(metadata_path, 'rb') as f:
+                with open(metadata_path, "rb") as f:
                     
                     metadata = pickle.load(f)
 
                 # Compare dataset hash
-                if metadata.get('dataset_hash') != dataset_hash:
+                if metadata.get("dataset_hash") != dataset_hash:
                     
                     print(f"Dataset hash mismatch for {dataset_name}. Regenerating embeddings.")
                     raise ValueError("Dataset hash mismatch")
@@ -72,7 +114,7 @@ def load_embeddings(
                     os.makedirs(embedding_sorted_path)
 
                 model, embedding_size, tokeniser = setup_model(model_selection, device)
-                embeddings = fetch_embeddings(dataset, model, tokeniser, batch_size, device, embedding_type, embedding_layer, embedding_size)
+                embeddings = fetch_embeddings(dataset, model, tokeniser, batch_size, device, embedding_type, embedding_layer, embedding_size, n_workers)
                 
                 # Save embeddings and metadata
                 torch.save(embeddings, embedding_tensor_path)
@@ -86,24 +128,28 @@ def load_embeddings(
                 embeddings_list.append(embeddings)
                 print(f"Generated and saved embeddings for dataset '{dataset_name}' at '{embedding_tensor_path}'")
 
-        if config["NORMALISE_EMBEDDINGS"]:
+        if normalise_embeddings:
 
             embeddings_list = normalise_embeddings(embeddings_list)
 
-        dataset.sequence_representations = concatenate_embeddings(embeddings_list)
+        dataset.sequence_embeddings = concatenate_embeddings(embeddings_list)
         
-        if config["WILDTYPE_CONCAT"]:
+        if wildtype_concat:
             
             dataset = concat_wildtype_embeddings(dataset)
         
-        datasets_dict["all"][dataset_name] = dataset
+        elif wildtype_delta:
+            
+            dataset = find_wildtype_delta(dataset)
+        
+        dataset_dicts[index]["dataset"] = dataset
 
     # Fetch arbitrary dataset to check shape, should all be the same so order does not matter
-    first_dataset = next(iter(datasets_dict["all"].values()))
-    embedding_dimensions = first_dataset.sequence_representations[0].dim()
-    embedding_size = first_dataset.sequence_representations[0].shape[embedding_dimensions - 1]
+    first_dataset = dataset_dicts[0]["dataset"]
+    embedding_dimensions = first_dataset.sequence_embeddings[0].dim()
+    embedding_size = first_dataset.sequence_embeddings[0].shape[embedding_dimensions - 1]
 
-    return datasets_dict, embedding_size
+    return dataset_dicts, embedding_size
                 
 def setup_model(model_selection: list, device: str):
     
@@ -179,12 +225,13 @@ def fetch_embeddings(
     device: str,
     embedding_type: str,
     embedding_layer: int,
-    embedding_size: int
+    embedding_size: int,
+    n_workers: int
 ) -> torch.tensor:
     
     pooled_batch_embeddings = []
     full_embeddings = [None] * len(dataset)
-    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False)
+    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers)
 
     with torch.no_grad():
 
@@ -192,14 +239,14 @@ def fetch_embeddings(
 
         for batch_idx, batch in enumerate(dataloader):
 
-            sequences = batch["variant_aa_seq"]
+            sequences = batch["aa_seq"]
 
             if embedding_type == "RAW":
                 
                 batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = []
                 
-                for seq_idx, seq in enumerate(batch["variant_aa_seq"]):
+                for seq_idx, seq in enumerate(batch["aa_seq"]):
                     
                     seq_len = len(seq)
                     seq_embeddings = batch_embeddings[seq_idx, 1:seq_len + 1, :].cpu()
@@ -240,13 +287,9 @@ def fetch_embeddings(
                 batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
                 pooled_batch_embeddings = fit_principal_components(batch_embeddings, 3, device).cpu()
 
-            elif embedding_type == "LDSP":  # Latent Distance to Stable Point
+            #elif embedding_type == "LDSP":  # Latent Distance to Stable Point
                 
-                pooled_batch_embeddings = find_latent_distance_to_stable_point(sequences, model, tokeniser, device, embedding_layer).cpu()
-
-            elif embedding_type == "WT_COMBO":
-                
-                pass
+            #    pooled_batch_embeddings = find_latent_distance_to_stable_point(sequences, model, tokeniser, device, embedding_layer).cpu()
 
             else:
 

@@ -1,9 +1,11 @@
+# Standard modules
+from pathlib import Path
+
 # Third-party modules
 import torch
 from torch.utils.data import DataLoader
 
 # Local modules
-from config_loader import config
 from visuals import plot_loss
 
 def handle_training_models(
@@ -17,7 +19,8 @@ def handle_training_models(
     min_epochs,
     max_epochs,
     patience,
-    device
+    device,
+    embedding_size
 ):
     
     trained_model = None
@@ -53,7 +56,9 @@ def handle_training_models(
                 patience,
                 device
             )
-        
+    
+    save_trained_model(trained_model, results_path, embedding_size)
+
     return trained_model
 
 def train_ffnn_from_embeddings(
@@ -71,7 +76,7 @@ def train_ffnn_from_embeddings(
     
     model.to(device)
     
-    if dataloaders["train"] is None:
+    if dataloaders["TRAIN"] is None:
         
         raise Exception("Currently do not support running without training.")
     
@@ -89,9 +94,9 @@ def train_ffnn_from_embeddings(
         training_loss = 0.0
         
         # Iterate through batches in training data loader
-        for batch in dataloaders["train"]:
+        for batch in dataloaders["TRAIN"]:
             
-            inputs = batch["sequence_representation"].float().to(device)
+            inputs = batch["sequence_embedding"].float().to(device)
             values = {}
             masks = {}
             
@@ -117,7 +122,7 @@ def train_ffnn_from_embeddings(
                         predictions[output_feature].masked_select(masks[output_feature]),
                         values[output_feature].masked_select(masks[output_feature])
                         )
-                    
+
             total_loss = sum(losses.values())
             total_loss.backward()
             optimiser.step()
@@ -126,15 +131,15 @@ def train_ffnn_from_embeddings(
         # Log training loss
         if (epoch + 1) % 1 == 0:
         
-            print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {training_loss / len(dataloaders['train'])}")
+            print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {training_loss / len(dataloaders['TRAIN'])}")
     
-        training_loss_list.append(training_loss / len(dataloaders["train"]))
+        training_loss_list.append(training_loss / len(dataloaders["TRAIN"]))
         
         # Validation phase of trianing step
-        if dataloaders["validation"] is None:
+        if dataloaders.get("VALIDATION", None) is None:
         
             # Early stopping check
-            average_training_loss = training_loss / len(dataloaders["train"])
+            average_training_loss = training_loss / len(dataloaders["TRAIN"])
 
             if average_training_loss < best_training_loss:
 
@@ -158,9 +163,9 @@ def train_ffnn_from_embeddings(
             
             with torch.no_grad():
                 
-                for batch in dataloaders["validation"]:
+                for batch in dataloaders["VALIDATION"]:
 
-                    inputs = batch["sequence_representation"].float().to(device)
+                    inputs = batch["sequence_embedding"].float().to(device)
                     output_feature_values = {}
                     output_feature_masks = {}
                     
@@ -192,12 +197,12 @@ def train_ffnn_from_embeddings(
             # Log validation loss
             if (epoch + 1) % 1 == 0:
                 
-                print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {validation_loss / len(dataloaders['validation'])}")
+                print(f"Epoch [{epoch + 1}/{max_epochs}], Validation Loss: {validation_loss / len(dataloaders['VALIDATION'])}")
 
-            validation_loss_list.append(validation_loss / len(dataloaders["validation"]))
+            validation_loss_list.append(validation_loss / len(dataloaders["VALIDATION"]))
             
             # Early stopping check
-            average_validation_loss = validation_loss / len(dataloaders["validation"])
+            average_validation_loss = validation_loss / len(dataloaders["VALIDATION"])
 
             if average_validation_loss < best_validation_loss:
 
@@ -236,7 +241,7 @@ def train_rnn_from_embeddings(
 ):
     model.to(device)
     
-    if dataloaders["train"] is None:
+    if dataloaders["TRAIN"] is None:
         
         raise Exception("Currently do not support running without training.")
     
@@ -254,9 +259,9 @@ def train_rnn_from_embeddings(
         training_loss = 0.0
         
         # Iterate through batches in training data loader
-        for batch in dataloaders["train"]:
+        for batch in dataloaders["TRAIN"]:
             
-            inputs = batch["sequence_representation"].float().to(device)  # Shape: (batch_size, seq_length, embedding_dim)
+            inputs = batch["sequence_embedding"].float().to(device)  # Shape: (batch_size, seq_length, embedding_dim)
             lengths = batch["length"].to(device)
             values = {}
             masks = {}
@@ -292,15 +297,15 @@ def train_rnn_from_embeddings(
         # Log training loss
         if (epoch + 1) % 1 == 0:
             
-            print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {training_loss / len(dataloaders['train'])}")
+            print(f"Epoch [{epoch + 1}/{max_epochs}], Training Loss: {training_loss / len(dataloaders['TRAIN'])}")
     
-        training_loss_list.append(training_loss / len(dataloaders["train"]))
+        training_loss_list.append(training_loss / len(dataloaders["TRAIN"]))
         
         # Validation phase
-        if dataloaders["validation"] is None:
+        if dataloaders["VALIDATION"] is None:
             
             # Early stopping check
-            average_training_loss = training_loss / len(dataloaders["train"])
+            average_training_loss = training_loss / len(dataloaders["TRAIN"])
 
             if average_training_loss < best_training_loss:
                 
@@ -326,7 +331,7 @@ def train_rnn_from_embeddings(
                 
                 for batch in dataloaders["validation"]:
 
-                    inputs = batch["sequence_representation"].float().to(device)
+                    inputs = batch["sequence_embedding"].float().to(device)
                     lengths = batch["length"].to(device)
                     values = {}
                     masks = {}
@@ -388,3 +393,21 @@ def train_rnn_from_embeddings(
 
     return model
 
+def save_trained_model(trained_model, results_path, embedding_size):
+
+    checkpoint = {
+        "model_state_dict": trained_model.state_dict(),
+        "input_dimensions": embedding_size
+    }
+
+    torch.save(trained_model.state_dict(), results_path / "checkpoint.pt")
+
+def load_trained_model(model, checkpoint_directory, device):
+    
+    checkpoint_path = Path(checkpoint_directory) / "checkpoint.pt"
+    checkpoint = torch.load(checkpoint_path, map_location = device)
+    model.load_state_dict(checkpoint)
+    model.to(device)
+    model.eval()  
+    
+    return model

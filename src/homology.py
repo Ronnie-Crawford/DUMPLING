@@ -2,14 +2,24 @@
 import subprocess
 import os
 
-def handle_homology(datasets_dict, homology_path):
+# Local modules
+from helpers import get_homology_path
+
+def handle_homology(dataset_dicts, base_path, splits_method_choice):
+    
+    if splits_method_choice != "HOMOLOGOUS_AWARE":
+        
+        return None
+    
+    dataset_unique_keys = [dataset_dict["unique_key"] for dataset_dict in dataset_dicts]
+    homology_path = get_homology_path(base_path, dataset_unique_keys)
     
     if not os.path.isdir(homology_path):
     
         # Write FASTA
         os.makedirs((homology_path), exist_ok = True)
         fasta_path = homology_path / "all_sequences.fasta"
-        write_all_sequences_to_fasta(datasets_dict, fasta_path)
+        write_all_sequences_to_fasta(dataset_dicts, fasta_path)
         run_mmseqs2(homology_path, fasta_path)
         
         # Parse mmseqs2 cluster results
@@ -17,7 +27,7 @@ def handle_homology(datasets_dict, homology_path):
         sequence_families = parse_mmseqs2_clusters(cluster_file)
 
         # Build sequence info mapping
-        sequence_info = build_sequence_info(datasets_dict)
+        sequence_info = build_sequence_info(dataset_dicts)
 
         # Save the sequence families
         output_tsv = homology_path / "sequence_families.tsv"
@@ -48,9 +58,10 @@ def handle_homology(datasets_dict, homology_path):
         #return family_descriptions
 
         print(f"Homology grouping completed, found {len(sequence_families)} sequence families.")
+        
+    return homology_path
 
-
-def write_all_sequences_to_fasta(datasets_dict, output_fasta):
+def write_all_sequences_to_fasta(dataset_dicts, output_fasta):
     
     """
     Writes all sequences from the given datasets to a single FASTA file.
@@ -68,11 +79,14 @@ def write_all_sequences_to_fasta(datasets_dict, output_fasta):
     
     with open(output_fasta, 'w') as fasta_file:
         
-        for dataset_name, dataset in datasets_dict["all"].items():
+        for dataset_dict in dataset_dicts:
             
-            for index, sequence in enumerate(dataset.variant_aa_seqs):
+            dataset = dataset_dict["dataset"]
+            dataset_unique_key = dataset_dict["unique_key"]
+            
+            for index, sequence in enumerate(dataset.aa_seqs):
                 
-                sequence_id = f"{dataset_name}_seq{index}"          # Construct a unique sequence ID by combining the dataset name and an index.
+                sequence_id = f"{dataset_unique_key}_seq{index}"   # Construct a unique sequence ID by combining the dataset-label group name and an index.
                 fasta_file.write(f">{sequence_id}\n{sequence}\n")
                 
 def run_mmseqs2(homology_path, fasta_path):          
@@ -120,21 +134,26 @@ def parse_mmseqs2_clusters(cluster_file):
     
     return sequence_families
 
-def build_sequence_info(datasets_dict):
+def build_sequence_info(dataset_dicts):
     
     """
     Builds a dictionary mapping sequence_id -> {dataset_name, index, sequence}
     """
     
     sequence_info = {}
-    
-    for dataset_name, dataset in datasets_dict["all"].items():
+
+    for dataset_dict in dataset_dicts:
         
-        for index, sequence in enumerate(dataset.variant_aa_seqs):
+        dataset_name = dataset_dict["dataset_name"]
+        dataset = dataset_dict["dataset"]
+        label = dataset_dict["label"]
+        dataset_unique_key = dataset_dict["unique_key"]
+        
+        for index, sequence in enumerate(dataset.aa_seqs):
             
-            sequence_id = f"{dataset_name}_seq{index}"
+            sequence_id = f"{dataset_unique_key}_seq{index}"
             sequence_info[sequence_id] = {
-                "dataset_name": dataset_name,
+                "dataset_group_name": dataset_unique_key,
                 "index": index,
                 "sequence": sequence
             }
@@ -159,7 +178,7 @@ def save_sequence_families(sequence_families, sequence_info, output_tsv):
                 if seq_id in sequence_info:
                     
                     seq_details = sequence_info[seq_id]
-                    original_dataset = seq_details["dataset_name"]
+                    original_dataset = seq_details["dataset_group_name"]
                     sequence = seq_details["sequence"]
                     tsv_file.write(f"{original_dataset}\t{family_id}\t{seq_id}\t{sequence}\n")
 
@@ -205,9 +224,9 @@ def run_phmmer_for_descriptions(query_fasta, output_file):
         query_fasta,
         database
     ],
-    check=True,
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL)
+    check = True,
+    stdout = subprocess.DEVNULL,
+    stderr = subprocess.DEVNULL)
 
 def parse_phmmer_descriptions(tbl_file):
     

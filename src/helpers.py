@@ -7,6 +7,9 @@ import datetime
 import shutil
 import hashlib
 import random
+import json
+import os
+import multiprocessing
 
 # Third-party modules
 import numpy as np
@@ -15,7 +18,7 @@ import torch
 from torch.utils.data import DataLoader, ConcatDataset
 
 # Local modules
-from splits import read_homology_file
+#from splits import read_homology_file
 
 def get_device(device: str) -> torch.device:
 
@@ -53,6 +56,18 @@ def get_device(device: str) -> torch.device:
         print(f"Manual overide, using device: {device.upper()}")
         return torch.device(device)
 
+def get_n_workers():
+    
+    if os.environ.get("SLURM_JOB_ID") is not None:
+        
+        n_workers = 0
+        
+    else:
+        
+        n_workers = max(1, multiprocessing.cpu_count() - 1)
+
+    return n_workers
+
 def setup_folders() -> Path:
     
     package_folder = Path(__file__).resolve().parent.parent
@@ -75,6 +90,27 @@ def get_results_path(package_folder):
     shutil.copy((package_folder / "config.json"), (results_path / "config.json"))
     
     return results_path
+
+def get_benchmarking_results_path(package_folder, train_datasets, test_datasets, scale_size, benchmarking_timestamp, config, base_flag):
+    
+    if base_flag == True:
+        
+        results_path = package_folder / "results" / (str(benchmarking_timestamp.year) + "-" + str(benchmarking_timestamp.month) + "-" + str(benchmarking_timestamp.day)) / (str(benchmarking_timestamp.hour) + ":" + str(benchmarking_timestamp.minute) + ":" + str(benchmarking_timestamp.second))
+        results_path.mkdir(parents = True, exist_ok = True)
+        
+        return results_path
+
+    else:
+    
+        results_path = package_folder / "results" / (str(benchmarking_timestamp.year) + "-" + str(benchmarking_timestamp.month) + "-" + str(benchmarking_timestamp.day)) / (str(benchmarking_timestamp.hour) + ":" + str(benchmarking_timestamp.minute) + ":" + str(benchmarking_timestamp.second)) / str(train_datasets) / str(scale_size) / str(test_datasets)
+        results_path.mkdir(parents = True, exist_ok = True)
+        new_config_filepath = results_path / "config.json"
+        
+        with open(new_config_filepath, "w") as new_config_file:
+            
+            json.dump(config, new_config_file)
+        
+        return results_path
 
 def get_homology_path(package_folder, all_dataset_names):
     
@@ -153,9 +189,9 @@ def make_tensor_ready(value):
 
 def compute_dataset_hash(dataset):
     
-    sequence_str = ''.join(dataset.variant_aa_seqs)
+    sequence_str = ''.join(dataset.aa_seqs)
     
-    return hashlib.md5(sequence_str.encode('utf-8')).hexdigest()
+    return hashlib.md5(sequence_str.encode("utf-8")).hexdigest()
 
 def normalise_embeddings(embeddings_list):
 
@@ -188,87 +224,6 @@ def normalise_tensor(tensor):
         normalised_vector = vector
 
     return torch.tensor(normalised_vector)
-
-def collate_fn(batch):
-    
-    # Extract sequences and compute lengths
-    sequences = [item["variant_aa_seq"] for item in batch]
-    sequence_representations = [item["sequence_representation"] for item in batch]
-    lengths = torch.tensor([len(sequence) for sequence in sequences])
-    
-    # Pad sequences to the same length
-    padded_sequences = torch.nn.utils.rnn.pad_sequence(sequence_representations, batch_first = True)
-    
-    # Collect other batch elements
-    batch_dict = {
-        "sequence_representation": padded_sequences,
-        "length": lengths,
-    }
-    
-    for key in batch[0]:
-        
-        if key not in ['sequence_representation']:
-            
-            values = [item[key] for item in batch]
-            
-            if isinstance(values[0], torch.Tensor):
-                
-                batch_dict[key] = torch.stack(values)
-                
-            elif isinstance(values[0], (float, int, bool)):
-                
-                batch_dict[key] = torch.tensor(values)
-                
-            elif isinstance(values[0], str):
-                
-                batch_dict[key] = values  # Keep as list of strings
-                
-            else:
-                
-                # Handle other data types if necessary
-                batch_dict[key] = values  # Keep as is or implement custom handling
-                
-    return batch_dict
-
-def old_collate_fn(batch):
-    
-    # Extract sequences and compute lengths
-    sequences = [item["sequence_representation"] for item in batch]
-    lengths = torch.tensor([seq.size(0) for seq in sequences])  # Assuming sequences are tensors of shape (seq_length, embedding_dim)
-    
-    # Pad sequences to the same length
-    padded_sequences = torch.nn.utils.rnn.pad_sequence(sequences, batch_first=True)
-    
-    # Collect other batch elements
-    batch_dict = {
-        'sequence_representation': padded_sequences,
-        'length': lengths,
-    }
-    
-    for key in batch[0]:
-        
-        if key not in ['sequence_representation']:
-            
-            values = [item[key] for item in batch]
-            
-            if isinstance(values[0], torch.Tensor):
-                
-                batch_dict[key] = torch.stack(values)
-                
-            elif isinstance(values[0], (float, int, bool)):
-                
-                batch_dict[key] = torch.tensor(values)
-                
-            elif isinstance(values[0], str):
-                
-                batch_dict[key] = values  # Keep as list of strings
-                
-            else:
-                
-                # Handle other data types if necessary
-                batch_dict[key] = values  # Keep as is or implement custom handling
-                
-    return batch_dict
 
 def concatenate_embeddings(embeddings_list: list) -> list:
 
@@ -317,52 +272,62 @@ def fit_principal_components(embeddings, component_index: int, device: str = "cp
 
     return principal_components
 
-def remove_homologous_sequences_from_inference(datasets_dict, homology_path):
+#@lru_cache(maxsize = None)
+def read_sequence_to_family(homology_tsv_path):
     
-    homology_family_dict = read_homology_file(homology_path / "sequence_families.tsv")
+    """
+    Cache the sequence→family map so we only parse the TSV once.
+    """
+    
+    homology_df = pd.read_csv(homology_tsv_path, sep="\t")
     sequence_to_family_dict = {}
+    
+    for _, row in homology_df.iterrows():
+        
+        sequence_to_family_dict[row["sequence"]] = row["sequence_family"]
+        
+    return sequence_to_family_dict
 
-    for family_key, sequence_list in homology_family_dict.items():
-        
-        for sequence in sequence_list:
-            
-            sequence_to_family_dict[sequence] = family_key
+def remove_homologous_sequences_from_inference(
+    dataset_dicts: dict,
+    homology_path: str
+) -> dict:
     
-    used_domain_families = []
-    
-    for dataset in datasets_dict["train"].values():
-    
-        for sequence in dataset.variant_aa_seqs:
-            
-            family = sequence_to_family_dict.get(sequence)
-            
-            if family:
-                
-                used_domain_families.append(family)
-    
-    filtered_datasets = []
-    
-    for dataset in datasets_dict["inference_only"].values():
-        
-        keep_indices = []
-        
-        for index in range(len(dataset)):
-            
-            protein = dataset[index]
-            sequence = protein["variant_aa_seq"]
-            inference_sequence_family = sequence_to_family_dict.get(sequence)
-            
-            if inference_sequence_family not in used_domain_families:
-                
-                keep_indices.append(index)
-        
-        filtered_dataset = dataset.filter_by_indices(keep_indices)
-        filtered_datasets.append(filtered_dataset)
-    
-    return filtered_datasets
+    """
+    Given a dict of ProteinDataset instances—one entry must be
+    "spoof_training_dataset" holding the training sequences—this
+    function removes from every other dataset any sequences that
+    share a homology family with the spoof training set.
 
-def concat_splits(splits: dict) -> dict:
+    Returns a new dict of filtered ProteinDataset (excluding the spoof).
+    """
     
+    # Load the mapping sequence → family
+    sequence_to_family = read_sequence_to_family(homology_path / "sequence_families.tsv")
+
+    # Identify all families used by the spoof training dataset
+    spoof = datasets_dict["spoof_training_dataset"]
+    used_families = {sequence_to_family.get(sequence) for sequence in spoof.aa_seqs if sequence_to_family.get(sequence) is not None}
+
+    # Filter each real dataset
+    filtered_datasets = {}
+    
+    for index, dataset_dict in enumerate(dataset_dicts):
+        
+        name = dataset_dict["unique_key"]
+        dataset = dataset_dict["dataset"]
+        
+        if name == "spoof_training_dataset":
+            
+            continue
+
+        keep_indices = [index for index, sequence in enumerate(dataset.aa_seqs) if sequence_to_family.get(sequence) not in used_families]
+        dataset_dicts[index]["dataset"] = dataset.filter_by_indices(keep_indices)
+
+    return dataset_dicts
+
+def concat_splits(splits: dict, include_test_in_inference: bool) -> dict:
+        
     if splits["train"]:
         
         splits["train"] = ConcatDataset(splits["train"])
@@ -379,78 +344,38 @@ def concat_splits(splits: dict) -> dict:
         
         splits["validation"] = None
 
-    if splits["test"] and splits["inference"]:
+    if include_test_in_inference == True:
+
+        if splits["test"] and splits["inference"]:
+            
+            splits["test_inference"] = ConcatDataset(splits["test"] + splits["inference"])
         
-        splits["testing_inference"] = ConcatDataset(splits["test"] + splits["inference"])
-    
-    elif splits["test"] and not splits["inference"]:
+        elif splits["test"] and not splits["inference"]:
+            
+            splits["test_inference"] = ConcatDataset(splits["test"])
+            
+        elif not splits["test"] and splits["inference"]:
+            
+            splits["test_inference"] = ConcatDataset(splits["inference"])
         
-        splits["test_inference"] = ConcatDataset(splits["test"])
-        
-    elif not splits["test"] and splits["inference"]:
-        
-        splits["test_inference"] = ConcatDataset(splits["inference"])
+        else:
+            
+            splits["test_inference"] = None
     
     else:
         
-        splits["test_inference"] = None
+        if splits["inference"]:
+            
+            splits["test_inference"] = ConcatDataset(splits["inference"])
+        
+        else:
+            
+            splits["test_inference"] = None
     
     splits["test"] = None
     splits["inference"] = None
     
     return splits
-
-def splits_to_loaders(splits: dict, batch_size: int, n_workers: int) -> dict:
-    
-    if splits["train"] is not None:
-        
-        training_loader = DataLoader(
-            splits["train"],
-            batch_size = batch_size,
-            shuffle = True,
-            num_workers = n_workers,
-            collate_fn=collate_fn
-            )
-        
-    else:
-        
-        training_loader = None
-        
-    if len(splits["validation"]) > 0:
-        
-        validation_loader = DataLoader(
-            splits["validation"],
-            batch_size = batch_size,
-            shuffle = True,
-            num_workers = n_workers,
-            collate_fn=collate_fn
-            )
-    
-    else:
-        
-        validation_loader = None
-    
-    if splits["test_inference"] is not None:
-        
-        testing_inference_loader = DataLoader(
-            splits["test_inference"],
-            batch_size = batch_size,
-            shuffle = False,
-            num_workers = n_workers,
-            collate_fn=collate_fn
-            )
-
-    else:
-        
-        testing_loader = None
-
-    dataloaders = {
-        "train": training_loader,
-        "validation": validation_loader,
-        "test_inference": testing_inference_loader
-    }
-
-    return dataloaders
 
 def get_mutants(sequence, vocab, search_breadth, search_depth = 1):
 
@@ -499,25 +424,6 @@ def mutate_sequence(sequence, vocab):
 
     return sequence
 
-#def get_wt_sequence_for_domain(domain_name: str, dataset: ProteinDataset) -> str:
-    
-    """
-    Returns the WT sequence for a given domain.
-    Assumes there is exactly one sequence flagged as WT per domain.
-    """
-    
-#    wild_type_sequences = []
-    
-#    for index, quuery_domain_name in enumerate(dataset.domain_names):
-        
-#        if domain_name == quuery_domain_name and dataset.wt_flags[index]:
-            
-#            wild_type_sequences.append(dataset.variant_aa_seqs[index])
-        
-#    assert len(wild_type_sequences) == 1
-    
-#    return wild_type_sequences[0]
-
 def check_one_wt_per_domain(dataset):
     
     for domain_name in set(dataset.domain_names):
@@ -565,37 +471,56 @@ def filter_domains_with_one_wt(dataset):
 def concat_wildtype_embeddings(dataset):
     
     domain_to_wt = {}
-    new_representations = []
+    new_embeddingss = []
     
     for index, domain in enumerate(dataset.domain_names):
         
         if dataset.wt_flags[index]:
             
-            domain_to_wt[domain] = dataset.sequence_representations[index]
+            domain_to_wt[domain] = dataset.sequence_embeddings[index]
     
     for index, domain in enumerate(dataset.domain_names):
         
-        concatinated_embedding = torch.cat((dataset.sequence_representations[index], domain_to_wt.get(domain)), dim = 0)
-        new_representations.append(concatinated_embedding)
+        concatinated_embedding = torch.cat((dataset.sequence_embeddings[index], domain_to_wt.get(domain)), dim = 0)
+        new_embeddings.append(concatinated_embedding)
     
-    dataset.sequence_representations = new_representations
+    dataset.sequence_embeddings = new_embeddings
     
     return dataset
 
-def remove_wt_from_split(split):
+def find_wildtype_delta(dataset):
     
-    if split is not []:
-        
-        filtered_split = []
-        
-        for dataset in split:
+    domain_to_wt = {}
+    new_embeddings = []
     
-            keep_indices = [index for index, wt_flag in enumerate(dataset.wt_flags) if not wt_flag]
-            filtered_dataset = dataset.filter_by_indices(keep_indices)
-            filtered_split.append(filtered_dataset)
+    for index, domain in enumerate(dataset.domain_names):
         
-        return filtered_split
+        if dataset.wt_flags[index]:
+            
+            domain_to_wt[domain] = dataset.sequence_embeddings[index]
     
-    else:
+    for index, domain in enumerate(dataset.domain_names):
         
-        return []
+        delta_embedding = dataset.sequence_embeddings[index] - domain_to_wt.get(domain)
+        new_embeddings.append(delta_embedding)
+    
+    dataset.sequence_embeddings = new_embeddings
+    
+    return dataset
+
+def handle_setup(
+    downstream_models_dict: dict,
+    ) -> tuple[list, list, list, list, str, bool]:
+    
+    # Fetch settings from config
+    rnn_type = downstream_models[0].split("_")[0]
+    bidirectional = False
+    
+    if "_" in downstream_models[0]:
+        
+        parts = downstream_models[0].split("_")
+        bidirectional = (len(parts) > 1 and parts[1] == "BIDIRECTIONAL")
+    
+    return rnn_type, bidirectional
+    
+    

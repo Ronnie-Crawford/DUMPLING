@@ -6,7 +6,11 @@ import torch
 import torch.nn as nn
 
 # Local modules
-from config_loader import config
+from training import handle_training_models
+
+"""
+RNN currently unusable, need to impliment a bit better with the rest of the code.
+"""
 
 class FFNN(nn.Module):
 
@@ -160,6 +164,44 @@ class RNN(nn.Module):
         
         return out
 
+def handle_models(
+    hidden_layers: list,
+    dropout_layers: list,
+    learning_rate: float,
+    weight_decay: float,
+    min_epochs: int,
+    max_epochs: int,
+    patience: int,
+    downstream_models: list,
+    embedding_size: int,
+    dataloaders_dict: dict,
+    output_features: list,
+    activation_functions: list,
+    loss_functions: list,
+    optimisers: list,
+    #rnn_type: str,
+    #bidirectional: bool,
+    results_path: str,
+    device: str
+    ):
+    
+    # Set up untrained model, criterion and optimiser
+    model, criterion, optimiser = set_up_model(
+        downstream_models[0],
+        embedding_size,
+        hidden_layers,
+        dropout_layers,
+        output_features,
+        activation_functions,
+        #rnn_type,
+        #bidirectional,
+        loss_functions,
+        learning_rate,
+        weight_decay
+        )
+    
+    return model, criterion, optimiser
+
 def set_up_model(
     downstream_model: str,
     input_size: int,
@@ -167,8 +209,8 @@ def set_up_model(
     dropout_layers: list,
     output_features: list,
     activation_functions: list,
-    rnn_type: str,
-    bidirectional: bool,
+    #rnn_type: str,
+    #bidirectional: bool,
     loss_functions: list,
     learning_rate: float,
     weight_decay: float
@@ -203,8 +245,8 @@ def set_up_model(
                 hidden_layers,
                 dropout_layers,
                 activation_functions,
-                rnn_type,
-                bidirectional
+                #rnn_type,
+                #bidirectional
                 )
 
     optimiser = torch.optim.Adam(model.parameters(), lr = learning_rate, weight_decay = weight_decay)

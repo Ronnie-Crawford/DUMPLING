@@ -1,11 +1,16 @@
 # Standard modules
 from itertools import combinations
+from pathlib import Path
+import json
+import re
 
 # Third party modules
 import torch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+from scipy.stats import gaussian_kde
 #from sklearn.decomposition import PCA
 #from sklearn.preprocessing import LabelEncoder
 #import umap.umap_ as umap
@@ -115,7 +120,7 @@ def plot_embeddings(
 
     for idx, dataset in enumerate(datasets):
         
-        all_embeddings.append(torch.stack(dataset.sequence_representations))
+        all_embeddings.append(torch.stack(dataset.sequence_embeddings))
         all_outputs.append(torch.tensor(getattr(dataset, output_attribute)))
         all_domain_names.extend(dataset.domain_names)
 
@@ -205,7 +210,6 @@ def plot_embeddings(
     plt.savefig(results_path / f"embedding_{output_attribute}_{dim_reduction_method}_{label_type}.png", dpi = 300)
     plt.close()
 
-    
 def calculate_umap(embeddings, n_components = 2):
     
     """
@@ -250,4 +254,153 @@ def plot_loss(training_loss, validation_loss, results_path):
     plt.legend()
     plt.grid(True)
     plt.savefig((results_path / "loss.png"))
+    plt.close()
+
+def plot_domain_specific_metrics(metrics, results_path):
+    
+    for output_feature_dict in metrics.values():
+        
+        if output_feature_dict["MSE"] != None:
+        
+            mse_list = output_feature_dict["MSE"].values()
+            rmse_list = output_feature_dict["RMSE"].values()
+            r2_list = output_feature_dict["R²"].values()
+            spearmans_rank_list = output_feature_dict["Spearman"].values()
+            pearsons_rank_list = output_feature_dict["Pearson"].values()
+            
+            plt.hist(spearmans_rank_list)
+            plt.xlabel("Spearmans rank correlation between predicted and true values")
+            plt.ylabel("Number of domains")
+            plt.title("Performance of different domains")
+            plt.xticks(np.arange(-1, 1, step = 0.25))
+            plt.savefig((results_path / "domain_histogram_spearmans.png"))
+            plt.clf()
+            
+            plt.hist(pearsons_rank_list)
+            plt.xlabel("Pearsons rank correlation between predicted and true values")
+            plt.ylabel("Number of domains")
+            plt.title("Performance of different domains")
+            plt.xticks(np.arange(-1, 1, step = 0.25))
+            plt.savefig((results_path / "domain_histogram_pearsons.png"))
+
+def plot_benchmark_grid(results_base_path, output_feature, minimum_valid_datapoints = 10):
+    
+    results_base_path = Path(results_base_path)
+    
+    train_root = results_base_path / "train"
+    test_root  = results_base_path / "test"
+    
+    # Gather train dataset names
+    train_dataset_names = sorted([
+        p.name 
+        for p in train_root.iterdir() 
+        if p.is_dir()
+    ])
+    
+    # Parse test dataset names from folder names in test_root
+    folder_names = [
+        p.name 
+        for p in test_root.iterdir() 
+        if p.is_dir()
+    ]
+
+    test_dataset_set = set()
+
+    for folder_name in folder_names:
+        
+        match = re.match(r"trained_on_(.+)_tested_on_(.+)", folder_name)
+        
+        if match:
+            
+            test_dataset_set.add(match.group(2))
+
+    test_dataset_names = sorted(test_dataset_set)
+    
+    # List train and test dataset directories
+    #train_dataset_names = sorted([p.name for p in results_base_path.iterdir() if p.is_dir()])
+    #test_dataset_names = sorted([p.name for p in (results_base_path / train_dataset_names[0]).iterdir() if p.is_dir()])
+
+    fig, axes = plt.subplots(len(test_dataset_names), len(train_dataset_names), figsize=(4 * len(train_dataset_names), 4 * len(test_dataset_names)))
+    axes = np.atleast_2d(axes)
+
+    for i, test_dataset in enumerate(test_dataset_names):
+        
+        for j, train_dataset in enumerate(train_dataset_names):
+
+            #curr_path = results_base_path / train_dataset / test_dataset
+            curr_path = (
+                test_root 
+                / f"trained_on_{train_dataset}_tested_on_{test_dataset}"
+            )
+
+            predictions_df = pd.read_csv(curr_path / "results.csv")
+
+            with open(curr_path / "overall_metrics.json", "r") as overall_metrics_file:
+                
+                overall_metrics = json.load(overall_metrics_file)
+
+            with open(curr_path / "domain_specific_metrics.json", "r") as domain_specific_metrics_file:
+                
+                domain_metrics = json.load(domain_specific_metrics_file)
+
+            ax = axes[i, j]
+            ax.cla()
+            
+            # Checks if there is data, skips if not
+            feature_metrics = domain_metrics.get(output_feature)
+            
+            if sum(~np.isnan(predictions_df[f"{output_feature}_truth"].values)) < minimum_valid_datapoints:
+                
+                ax.text(0.5, 0.5, "No data", ha = "center", va = "center", fontsize = 10, alpha = 0.5)
+                ax.set_xticks([])
+                ax.set_yticks([])
+                continue
+
+            # Histogram of domain-specific metrics
+            spearman_vals = np.array(list(domain_metrics[output_feature]["Spearman"].values()))
+            pearson_vals = np.array(list(domain_metrics[output_feature]["Pearson"].values()))
+            bins = np.linspace(-1, 1, 21)
+            ax.hist(spearman_vals, bins = bins, color = "blue", alpha = 0.5, label = "Spearman")
+            ax.hist(pearson_vals, bins = bins, color = "green", alpha = 0.5, label = "Pearson")
+            ax.legend(loc = "lower center", bbox_to_anchor = (0.5, 0.02), fontsize = 8, ncol = 2)
+            ax.set_xlabel(
+                f"Domains: {len(domain_metrics[output_feature]['Pearson'])}\n"
+                f"Variants: {len(predictions_df[f'{output_feature}_truth'])}\n"
+                f"Overall Spearman: {overall_metrics[output_feature]['Spearman']:.3f}\n"
+                f"Overall Pearson: {overall_metrics[output_feature]['Pearson']:.3f}",
+                fontsize = 8
+            )
+
+            # Scatter and density contour plot
+            inset_ax = ax.inset_axes([0.1, 0.45, 0.45, 0.45])
+            x = predictions_df[f"{output_feature}_truth"].values
+            y = predictions_df[f"{output_feature}_predictions"].values
+            inset_ax.scatter(x, y, color = "red", s = 5, alpha = 0.1)
+            min_point, max_point = min(x.min(), y.min()), max(x.max(), y.max())
+            inset_ax.plot([min_point, max_point], [min_point, max_point], "k--", alpha = 0.1)
+            inset_ax.xaxis.set_major_locator(MaxNLocator(integer = True))
+            inset_ax.yaxis.set_major_locator(MaxNLocator(integer = True))
+
+            # Checks if there is variance for contours
+            if not np.allclose(y, y[0]):
+                
+                if len(x) > 5000:
+                
+                    idx = np.random.choice(len(x), 5000, replace = False)
+                    x, y = x[idx], y[idx]
+
+                density = gaussian_kde(np.vstack([x, y]))(np.vstack([x, y]))
+                inset_ax.tricontour(x, y, density, colors = "blue", alpha = 0.5)
+            
+    for j, train_dataset in enumerate(train_dataset_names):
+        
+        axes[0, j].set_title(f"Train: {train_dataset}", fontsize = 8)
+
+    for i, test_dataset in enumerate(test_dataset_names):
+        
+        axes[i, 0].set_ylabel(f"Test: {test_dataset}", fontsize = 8, rotation = 90, labelpad = 5)
+
+    plt.tight_layout()
+    output_file = results_base_path / f"{output_feature}_benchmark_grid.png"
+    plt.savefig(output_file, dpi=200)
     plt.close()
