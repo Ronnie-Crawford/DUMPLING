@@ -20,12 +20,10 @@
                 "DOMAIN_NAME_COLUMN": "domain_name",
                 "WT_FLAG_COLUMN": "is_wt",
                 "AA_SEQ_COLUMN": "aa_seq",
-                "SPLITS": {
-                    "TRAIN": 0.2,
-                    "VALIDATION": 0.0,
-                    "TEST": 0.2
-                    },
                 "LABEL_COLUMNS": {
+                    "ALL": {
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
                     "SUBSTITUTION": {
                         "COLUMN_NAME": "is_substitution",
                         "SPLITS": {"TRAIN": 0.2, "VALIDATION": 0.0, "TEST": 0.0}
@@ -48,15 +46,22 @@
                 "DOMAIN_NAME_COLUMN": "domain_name",
                 "WT_FLAG_COLUMN": "is_wt",
                 "AA_SEQ_COLUMN": "aa_seq",
-                "SPLITS": {
-                    "TRAIN": 0.0,
-                    "VALIDATION": 0.00,
-                    "TEST": 0.0
-                    },
                 "LABEL_COLUMNS": {
-                    "SUBSTITUTION": "",
-                    "INSERTION": "",
-                    "DELETION": ""
+                    "ALL": {
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "SUBSTITUTION": {
+                        "COLUMN_NAME": "is_substitution",
+                        "SPLITS": {"TRAIN": 0.2, "VALIDATION": 0.0, "TEST": 0.0}
+                    },
+                    "INSERTION": {
+                        "COLUMN_NAME": "is_insertion",
+                        "SPLITS": {"TRAIN": 0.0, "VALIDATION": 0.0, "TEST": 1.0}
+                    },
+                    "DELETION": {
+                        "COLUMN_NAME": "is_deletion",
+                        "SPLITS": {"TRAIN": 0.0, "VALIDATION": 0.0, "TEST": 0.0}
+                    }
                 },
                 "PREDICTED_FEATURE_COLUMNS": {
                     "ENERGY": "energy_column_name"
@@ -157,9 +162,7 @@
             "LEARNING_RATE": 0.005,
             "MIN_EPOCHS": 10,
             "MAX_EPOCHS": 100,
-            "PATIENCE": 3,
-            "RANDOM_STATE": 1,
-            "N_WORKERS": 0
+            "PATIENCE": 3
         }
     }
 }

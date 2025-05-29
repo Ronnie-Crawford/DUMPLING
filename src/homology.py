@@ -1,18 +1,21 @@
-# Import standard modules
+# Standard modules
 import subprocess
+import shutil
 import os
 
-# Local modules
-from helpers import get_homology_path
-
-def handle_homology(dataset_dicts, base_path, splits_method_choice):
+def handle_homology(
+    dataset_dicts,
+    base_path,
+    force_regeneration: bool = False
+    ):
     
-    if splits_method_choice != "HOMOLOGOUS_AWARE":
+    subset_keys = [dataset_dict["unique_key"] for dataset_dict in dataset_dicts]
+    homology_path = get_homology_path(base_path, subset_keys)
+    
+    if force_regeneration and homology_path.exists():
         
-        return None
-    
-    dataset_unique_keys = [dataset_dict["unique_key"] for dataset_dict in dataset_dicts]
-    homology_path = get_homology_path(base_path, dataset_unique_keys)
+        print(f"Forcing regeneration of {homology_path}")
+        shutil.rmtree(homology_path)
     
     if not os.path.isdir(homology_path):
     
@@ -32,34 +35,15 @@ def handle_homology(dataset_dicts, base_path, splits_method_choice):
         # Save the sequence families
         output_tsv = homology_path / "sequence_families.tsv"
         save_sequence_families(sequence_families, sequence_info, output_tsv)
-        
-        # Pick representatives from each domain family
-        representatives_fasta = homology_path / "representatives_fasta.fasta"
-        write_representative_sequences(sequence_families, sequence_info, representatives_fasta)
-        
-        # Below is only needed if descriptions for each domain are desired but requires database FASTA file for PHMMER to use
-        
-        # Run PHMMER
-        #phmmer_output = homology_path / "phmmer_output.tbl"
-        #run_phmmer_for_descriptions(representatives_fasta, phmmer_output)
-
-        # Fetch descriptions
-        #rep_descriptions = parse_phmmer_descriptions(phmmer_output)
     
-        # Map descriptions back to families
-        #family_descriptions = {}
-        
-        #for family_id, family in enumerate(sequence_families, start = 1):
-            
-        #    representative = list(family)[0]
-        #    description = rep_descriptions.get(representative, "No description found")
-        #    family_descriptions[family_id] = description
-        
-        #return family_descriptions
-
-        print(f"Homology grouping completed, found {len(sequence_families)} sequence families.")
-        
     return homology_path
+
+def get_homology_path(package_folder, all_dataset_names):
+    
+    datasets_key = "-".join(sorted(all_dataset_names))
+    homology_folder_path = package_folder / "homology" / f"homology[{datasets_key}]"
+    
+    return homology_folder_path
 
 def write_all_sequences_to_fasta(dataset_dicts, output_fasta):
     
@@ -75,8 +59,6 @@ def write_all_sequences_to_fasta(dataset_dicts, output_fasta):
         - A FASTA file containing all sequences from all datasets with unique IDs.
     """
     
-    print("Writing FASTA file with all sequences...")
-    
     with open(output_fasta, 'w') as fasta_file:
         
         for dataset_dict in dataset_dicts:
@@ -88,7 +70,7 @@ def write_all_sequences_to_fasta(dataset_dicts, output_fasta):
                 
                 sequence_id = f"{dataset_unique_key}_seq{index}"   # Construct a unique sequence ID by combining the dataset-label group name and an index.
                 fasta_file.write(f">{sequence_id}\n{sequence}\n")
-                
+
 def run_mmseqs2(homology_path, fasta_path):          
       
     temp_directory = homology_path / "tmp"
@@ -101,9 +83,10 @@ def run_mmseqs2(homology_path, fasta_path):
     temp_directory
     ],
     cwd = homology_path,
-    check = True
+    check = True,
+    stdout = subprocess.DEVNULL
     )
-    
+
 def parse_mmseqs2_clusters(cluster_file):
     
     """
@@ -181,96 +164,3 @@ def save_sequence_families(sequence_families, sequence_info, output_tsv):
                     original_dataset = seq_details["dataset_group_name"]
                     sequence = seq_details["sequence"]
                     tsv_file.write(f"{original_dataset}\t{family_id}\t{seq_id}\t{sequence}\n")
-
-def write_representative_sequences(sequence_families, sequence_info, output_fasta):
-    
-    """
-    Writes one representative sequence from each domain family to a FASTA file.
-    
-    Parameters:
-        - sequence_families (list of sets): Domain families (each a set of sequence IDs).
-        - sequence_info (dict): Mapping of sequence_id -> {dataset_name, index, sequence}.
-        - output_fasta (str): Path to the output FASTA file.
-    """
-    
-    with open(output_fasta, 'w') as fasta_file:
-        
-        for family in sequence_families:
-            
-            representative = list(family)[0]
-            seq_details = sequence_info.get(representative)
-            
-            if seq_details:
-                
-                fasta_file.write(f">{representative}\n{seq_details['sequence']}\n")
-
-def run_phmmer_for_descriptions(query_fasta, output_file):
-    
-    """
-    Runs phmmer to search each representative sequence against the target database.
-    
-    Parameters:
-        - query_fasta (str): FASTA file of representative sequences.
-        - output_file (str): File where phmmer output will be saved.
-        - database (str): Path to the database to search against.
-    """
-    
-    database = query_fasta
-    
-    subprocess.run([
-        "phmmer",
-        "--tblout",
-        output_file,
-        query_fasta,
-        database
-    ],
-    check = True,
-    stdout = subprocess.DEVNULL,
-    stderr = subprocess.DEVNULL)
-
-def parse_phmmer_descriptions(tbl_file):
-    
-    """
-    Parses the phmmer output file to extract domain descriptions for each query.
-    
-    Parameters:
-        - tbl_file (str): The phmmer output file (table format).
-    
-    Returns:
-        - descriptions (dict): Mapping from query sequence ID to its domain description.
-        
-    Note:
-        The column index for the description may vary depending on the phmmer version/output format.
-    """
-    
-    descriptions = {}
-    
-    with open(tbl_file, 'r') as file:
-        
-        for line in file:
-            
-            if line.startswith("#"):
-                
-                continue
-            
-            fields = line.strip().split()
-            query_id = fields[2]
-
-            description = " ".join(fields[18:]) if len(fields) > 18 else "No description"
-            descriptions[query_id] = description
-            
-    return descriptions
-
-def add_family_descriptions(sequence_families, sequence_info, homology_path, database):
-    
-    """
-    Integrates domain descriptions for each family.
-    
-    Process:
-        1. Write representative sequences to a FASTA file.
-        2. Run phmmer on these sequences.
-        3. Parse phmmer output to get descriptions.
-        4. Return a mapping of family ID to domain description.
-    """
-    
-    pass

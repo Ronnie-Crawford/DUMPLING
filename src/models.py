@@ -1,16 +1,6 @@
-# Standard modules
-import random
-
 # Third-party modules
 import torch
 import torch.nn as nn
-
-# Local modules
-from training import handle_training_models
-
-"""
-RNN currently unusable, need to impliment a bit better with the rest of the code.
-"""
 
 class FFNN(nn.Module):
 
@@ -26,11 +16,10 @@ class FFNN(nn.Module):
         dropout_layers: list,
         activation_functions: list
         ):
-
+        
+        # Set up architecture of model, iterate through layers
         super(FFNN, self).__init__()
         layers = []
-
-        print("Using activation function: ", activation_functions[0])
 
         for index, hidden_size in enumerate(hidden_layers):
 
@@ -52,221 +41,80 @@ class FFNN(nn.Module):
             input_size = hidden_size
 
         layers.append(nn.Linear(input_size, len(output_features)))
-
         self.network = nn.Sequential(*layers)
-
+    
     def forward(self, x):
 
         return self.network(x)
 
-class RNN(nn.Module):
-    
-    """
-    A flexible Recurrent Neural Network for processing sequences of embeddings.
-    """
-    
-    def __init__(
-        self,
-        input_size: int,
-        output_features: list,
-        hidden_layers: list,
-        dropout_layers: list,
-        activation_functions: str,
-        rnn_type: str,
-        bidirectional: bool
-    ):
-        
-        super(RNN, self).__init__()
-        
-        self.hidden_size = hidden_layers[0]
-        self.bidirectional = bidirectional
-        
-        # Decide type of RNN
-        if rnn_type == "LSTM":
-            
-            self.rnn = nn.LSTM(
-                input_size, 
-                hidden_layers[0], 
-                len(hidden_layers),
-                batch_first = True, 
-                bidirectional = bidirectional,
-                dropout = dropout_layers[0] if len(hidden_layers) > 0 else 0
-            )
-            
-        elif rnn_type == "GRU":
-            
-            self.rnn = nn.GRU(
-                input_size, 
-                hidden_layers[0], 
-                len(hidden_layers), 
-                batch_first = True, 
-                bidirectional = bidirectional,
-                dropout = dropout_layers[0] if len(hidden_layers) > 0 else 0
-            )
-            
-        else:
-            
-            raise ValueError("Invalid rnn_type. Expected 'LSTM' or 'GRU'")
-        
-        # Decide activation function and model size
-        self.activation = None
-        
-        match activation_functions[0]:
-                
-            case "RELU": self.activation = nn.ReLU()
-            case "LEAKYRELU": self.activation = nn.LeakyReLU(negative_slope = 0.01)    
-            case "ELU": self.activation = nn.ELU()
-            case "GELU": self.activation = nn.GELU()
-            case "SELU": self.activation = nn.SELU()
-        
-        n_directions = 2 if bidirectional else 1
-        self.fc = nn.Linear(hidden_layers[0] * n_directions, len(output_features))
-    
-    def forward(self, x, lengths):
-        
-        """
-        x: Padded sequences of shape (batch_size, seq_length, input_size)
-        lengths: Lengths of the sequences before padding
-        """
-        
-        # Pack the padded batch of sequences
-        packed_input = nn.utils.rnn.pack_padded_sequence(
-            x, lengths.cpu(), batch_first = True, enforce_sorted = False
-        )
-        
-        # Pass through the RNN
-        packed_output, _ = self.rnn(packed_input)
-        
-        # Unpack the sequences
-        output, _ = nn.utils.rnn.pad_packed_sequence(
-            packed_output, batch_first = True
-        )
-        
-        # Obtain the outputs from the last time step of each sequence
-        # For bidirectional RNNs concatenate the forward and backward outputs
-        if self.bidirectional:
-            
-            # Concatenate the outputs from the last time steps of both directions
-            forward_output = output[range(len(output)), lengths - 1, : self.hidden_size]
-            backward_output = output[:, 0, self.hidden_size:]
-            last_output = torch.cat((forward_output, backward_output), dim = 1)
-            
-        else:
-            
-            # Get the outputs from the last time step
-            last_output = output[range(len(output)), lengths - 1, :]
-        
-        # Apply activation function
-        last_output = self.activation(last_output)
-        
-        # Pass through the fully connected layer
-        out = self.fc(last_output)
-        
-        return out
-
 def handle_models(
+    dataloaders_dict: dict,
+    downstream_models: list,
+    embedding_size: int,
+    predicted_features: list,
     hidden_layers: list,
     dropout_layers: list,
     learning_rate: float,
     weight_decay: float,
-    min_epochs: int,
-    max_epochs: int,
-    patience: int,
-    downstream_models: list,
-    embedding_size: int,
-    dataloaders_dict: dict,
-    output_features: list,
     activation_functions: list,
     loss_functions: list,
     optimisers: list,
-    #rnn_type: str,
-    #bidirectional: bool,
     results_path: str,
     device: str
     ):
     
-    # Set up untrained model, criterion and optimiser
-    model, criterion, optimiser = set_up_model(
+    """
+    Sets up model, optimser, and loss function.
+    Currently can only set up one model, the first in the down stream models list,
+    in the future maybe we could have multiple as an ensemble architecture.
+    """
+    
+    model = get_model(
         downstream_models[0],
         embedding_size,
+        predicted_features,
         hidden_layers,
         dropout_layers,
-        output_features,
-        activation_functions,
-        #rnn_type,
-        #bidirectional,
-        loss_functions,
-        learning_rate,
-        weight_decay
+        activation_functions
         )
+    optimiser = torch.optim.Adam(model.parameters(), lr = learning_rate, weight_decay = weight_decay)
+    criterion = get_loss_function(loss_functions[0])
     
     return model, criterion, optimiser
 
-def set_up_model(
-    downstream_model: str,
-    input_size: int,
-    hidden_layers: list,
-    dropout_layers: list,
-    output_features: list,
-    activation_functions: list,
-    #rnn_type: str,
-    #bidirectional: bool,
-    loss_functions: list,
-    learning_rate: float,
-    weight_decay: float
+def get_model(
+    downsteam_model_choice,
+    input_size,
+    predicted_features,
+    hidden_layers,
+    dropout_layers,
+    activation_functions
     ):
-
-    print("MODEL: ", downstream_model)
-
-    match downstream_model:
-        
-        # Create a linear regression model - not fully implimented
-        case "LINEAR_REGRESSION":
-            
-            model = nn.Linear(input_size, output_features)
-        
-        # Create a feedforward neural network
+    
+    match downsteam_model_choice:
+    
         case "FFNN":
-            
+                
             model = FFNN(
                 input_size,
-                output_features,
+                predicted_features,
                 hidden_layers,
                 dropout_layers,
                 activation_functions
                 )
-        
-        # Create a recurrent neural network
-        case "LSTM_UNIDIRECTIONAL" | "LSTM_BIDIRECTIONAL" | "GRU_UNIDIRECTIONAL" | "GRU_BIDIRECTIONAL":
-            
-            model = RNN(
-                input_size,
-                output_features,
-                hidden_layers,
-                dropout_layers,
-                activation_functions,
-                #rnn_type,
-                #bidirectional
-                )
-
-    optimiser = torch.optim.Adam(model.parameters(), lr = learning_rate, weight_decay = weight_decay)
-    criterion = None
     
-    match loss_functions[0]:
+    return model
+
+def get_loss_function(loss_function_choice):
+    
+    match loss_function_choice:
         
         case "MSELOSS":
             
             criterion = nn.MSELoss()
-            print("Using MSE loss function.")
         
         case "MAELOSS":
             
             criterion = nn.L1Loss()
-            print("Using MAE loss function.")
         
-        case "HUBERLOSS":
-
-            criterion = nn.SmoothL1Loss(),
-            print("Using Huber loss function.")
-
-    return model, criterion, optimiser
+    return criterion

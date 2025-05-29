@@ -15,7 +15,7 @@ def read_config(file_path: str) -> dict:
     - config (dict): A dictionary containing the configuration parameters.
     """
 
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         
         config = json.load(file)
 
@@ -35,8 +35,8 @@ def preflight_checks(config):
         
         assert isinstance(config["DATA"]["DATASETS"][dataset]["PATH"], str), f"Config path for dataset: {dataset} must be a string."
         assert os.path.exists(config["DATA"]["DATASETS"][dataset]["PATH"]), f"Could not find path for dataset: {dataset}."
-        assert all(isinstance(split, float) for split in config["DATA"]["DATASETS"][dataset]["SPLITS"].values()), f"Config splits for dataset: {dataset} must be floats."
-        assert sum(config["DATA"]["DATASETS"][dataset]["SPLITS"].values()) <= 1.0, f"Train, validation and test split for dataset: {dataset} must total to less than 1.0."
+        #assert all(isinstance(split, float) for split in config["DATA"]["DATASETS"][dataset]["SPLITS"].values()), f"Config splits for dataset: {dataset} must be floats."
+        #assert sum(config["DATA"]["DATASETS"][dataset]["SPLITS"].values()) <= 1.0, f"Train, validation and test split for dataset: {dataset} must total to less than 1.0."
     
     assert isinstance(config["DATA"]["PREDICTED_FEATURES"]["APCA_FITNESS"], bool), "Config predicted feature: aPCA fitness option must be a bool."
     assert isinstance(config["DATA"]["PREDICTED_FEATURES"]["CDNAPD_ENERGY"], bool), "Config predicted feature: cDNA-PD energy option must be a bool."
@@ -61,62 +61,40 @@ def preflight_checks(config):
     
     # Downstream models
     assert all(isinstance(layer, int) for layer in config["DOWNSTREAM_MODELS"]["MODEL_TYPE"].values()), ""
-
+    
 def format_config(config):
     
     """
-    Takes some of the more complex config settings and parses them into more managable state for the rest of the package.
+    Takes some of the more complex config settings and parses them into a more managable state for the rest of the package.
     """
     
-    config["DATASETS_IN_USE"] = [(dataset_name, label_name) for dataset_name, labels in config["DATA"]["DATASET_GROUPS"].items()
+    config["SUBSETS_IN_USE"] = [
+        (dataset_name, label_name)
+        for dataset_name, labels in config["DATA"]["DATASET_GROUPS"].items()
         for label_name, include in labels.items() if include
         ]
-    config["DATASETS_LIST"] = list(config["DATA"]["DATASETS"].keys())
-    config["DATASETS_SPLITS_DICT"] = {
-        dataset_name: {"TRAIN": splits["SPLITS"]["TRAIN"], "VALIDATION": splits["SPLITS"]["VALIDATION"], "TEST": splits["SPLITS"]["TEST"]}
-        for dataset_name, splits in config["DATA"]["DATASETS"].items()
+    subsets_splits_dict = {}
+    
+    for dataset_name, label_name in config["SUBSETS_IN_USE"]:
+        
+        unique_key = f"{dataset_name}-{label_name}"
+        label_config = config["DATA"]["DATASETS"][dataset_name]["LABEL_COLUMNS"][label_name]
+        subsets_splits_dict[unique_key] = {
+            "TRAIN": label_config["SPLITS"]["TRAIN"],
+            "VALIDATION": label_config["SPLITS"]["VALIDATION"],
+            "TEST": label_config["SPLITS"]["TEST"],
         }
     
-    splits_dict = {}
-    
-    for dataset_name, label_name in config["DATASETS_IN_USE"]:
-        
-        key = f"{dataset_name}-{label_name}"
-
-        if label_name == "ALL":     # This is for the full dataset splits
-
-            base_splits = config["DATA"]["DATASETS"][dataset_name]["SPLITS"]
-            splits_dict[key] = {
-                "TRAIN":      base_splits["TRAIN"],
-                "VALIDATION": base_splits["VALIDATION"],
-                "TEST":       base_splits["TEST"],
-            }
-        else:                       # This is for the label-level splits
-
-            label_cfg = config["DATA"]["DATASETS"][dataset_name]["LABEL_COLUMNS"][label_name]
-            splits_dict[key] = {
-                "TRAIN":      label_cfg["SPLITS"]["TRAIN"],
-                "VALIDATION": label_cfg["SPLITS"]["VALIDATION"],
-                "TEST":       label_cfg["SPLITS"]["TEST"],
-            }
-
-    config["DATASETS_SPLITS_DICT"] = splits_dict
-    
+    config["SUBSETS_SPLITS_DICT"] = subsets_splits_dict
     predicted_features = set()
     
-    for dataset_name, label in config["DATASETS_IN_USE"]:
+    for dataset_name, label_name in config["SUBSETS_IN_USE"]:
         
-        feature_map = config["DATA"]["DATASETS"][dataset_name].get("PREDICTED_FEATURE_COLUMNS", {})
-        
-        for feature_name, column_name in feature_map.items():
-            
-            if isinstance(column_name, str) and column_name.strip():
+        for feature in config["DATA"]["DATASETS"][dataset_name]["PREDICTED_FEATURE_COLUMNS"].keys():
                 
-                predicted_features.add(feature_name)
+            predicted_features.add(feature)
 
     config["PREDICTED_FEATURES_LIST"] = sorted(predicted_features)
-    config["SPLITS_METHOD_CHOICE"] = [key for key, value in config["DATA"]["SPLITS_METHOD"].items() if value][0]
-    config["SPLITS_PRIORITY_CHOICE"] = [key for key, value in config["DATA"]["SPLITS_PRIORITY"].items() if value][0]
     config["UPSTREAM_MODELS_LIST"] = [key for key, value in config["UPSTREAM_MODELS"]["MODELS"].items() if value]
     config["EMBEDDING_POOL_TYPE_LIST"] = [key for key, value in config["UPSTREAM_MODELS"]["EMBEDDING_POOL_TYPES"].items() if value]
     config["DIMENSIONAL_REDUCTION_CHOICE"] = [key for key, value in config["UPSTREAM_MODELS"]["POSTPROCESSING"]["DIMENSIONAL_REDUCTION"].items() if value][0]

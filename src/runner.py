@@ -1,128 +1,143 @@
+# Standard modules
+import os
+import multiprocessing
+import datetime
+import shutil
+from pathlib import Path
+
+# Third-party modules
+import torch
+
 # Local modules
-from datasets import handle_data, make_spoof_train_dataset, handle_filtering
-from homology import handle_homology
+from datasets import handle_data, handle_filtering, add_spoof_train_dataset
 from embedding import handle_embeddings
-from splits import handle_splits, load_training_sequences
+from homology import handle_homology
+from splits import handle_splits, remove_homologous_sequences_from_inference
 from models import handle_models
 from training import handle_training_models, load_trained_model
 from inference import handle_inference
-from helpers import get_device, setup_folders, get_results_path, handle_setup, remove_homologous_sequences_from_inference, get_n_workers
+from metrics import handle_metrics
+from visuals import plot_predictions_vs_true
 
+# Global variables
 AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
-
-"""
-Idea is that this module contains the building-blocks of pipelines that can be called from main.
-This module sees config, other modules should be config agnostic.
-
-To do:
-- Add handle_visualisation
-- Move handle_tuning from main to runner
-"""
 
 def train_and_test(config):
     
-    device = get_device(None)
+    device = get_device()
     n_workers = get_n_workers()
     paths_dict = {"base": setup_folders()}
     paths_dict["results"] = get_results_path(paths_dict["base"])
     
+    print("Data")
     dataset_dicts = handle_data(
         paths_dict["base"],
-        config["DATASETS_IN_USE"],
+        config["SUBSETS_IN_USE"],
         config["DATA"]["DATASETS"],
         config["DATA"]["FILTERS"]["FILTER_ONE_WILDTYPE_PER_DOMAIN"],
         config["PREDICTED_FEATURES_LIST"],
         AMINO_ACIDS
         )
-
+    
+    print("Embeddings")
     dataset_dicts, embedding_size = handle_embeddings(
+        dataset_dicts,
         config["UPSTREAM_MODELS_LIST"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         config["UPSTREAM_MODELS"]["EMBEDDING_LAYERS"],
         config["EMBEDDING_POOL_TYPE_LIST"],
         config["DIMENSIONAL_REDUCTION_CHOICE"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["N_DESIRED_DIMENSIONS"],
+        config["UPSTREAM_MODELS"]["POSTPROCESSING"]["NORMALISE_EMBEDDINGS"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["WILDTYPE_EMBEDDING"]["CONCAT"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["WILDTYPE_EMBEDDING"]["DELTA"],
-        config["DOWNSTREAM_MODELS_LIST"],
-        dataset_dicts,
-        device,
         paths_dict["base"],
+        device,
         n_workers
         )
     
-    dataset_dicts = handle_filtering(
-        dataset_dicts
-        )
+    print("Filtering")
+    dataset_dicts = handle_filtering(dataset_dicts)
 
+    print("Homology")        
     paths_dict["homology"] = handle_homology(
         dataset_dicts,
         paths_dict["base"],
-        config["SPLITS_METHOD_CHOICE"]
+        force_regeneration = True
         )
     
+    print("Splits")
     dataloaders_dict = handle_splits(
-        config["SPLITS_PRIORITY_CHOICE"],
-        config["SPLITS_METHOD_CHOICE"],
+        dataset_dicts,
+        config["SUBSETS_SPLITS_DICT"],
         config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         n_workers,
-        dataset_dicts,
-        config["DATASETS_SPLITS_DICT"],
         paths_dict["homology"],
         paths_dict["results"]
         )
     
+    print("Models")
     model, criterion, optimiser = handle_models(
+        dataloaders_dict,
+        config["DOWNSTREAM_MODELS_LIST"],
+        embedding_size,
+        config["PREDICTED_FEATURES_LIST"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["HIDDEN_LAYERS"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["DROPOUT_LAYERS"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["LEARNING_RATE"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["WEIGHT_DECAY"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MIN_EPOCHS"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MAX_EPOCHS"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["PATIENCE"],
-        config["DOWNSTREAM_MODELS_LIST"],
-        embedding_size,
-        dataloaders_dict,
-        config["PREDICTED_FEATURES_LIST"],
         config["ACTIVATION_FUNCTIONS_LIST"],
         config["LOSS_FUNCTIONS"],
         config["OPTIMISERS"],
-        #rnn_type,
-        #bidirectional,
         paths_dict["results"],
         device
         )
-    
+        
+    print("Training")
     trained_model = handle_training_models(
-        config["DOWNSTREAM_MODELS_LIST"][0],    # For now we only use one downstream model, maybe in the future will add multiple
-        model,
         dataloaders_dict,
-        config["PREDICTED_FEATURES_LIST"],
+        model,
         criterion,
         optimiser,
-        paths_dict["results"],
+        config["PREDICTED_FEATURES_LIST"],
+        embedding_size,
+        config["DOWNSTREAM_MODELS_LIST"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MIN_EPOCHS"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MAX_EPOCHS"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["PATIENCE"],
         device,
-        embedding_size
-    )
+        paths_dict["results"]
+        )
     
-    predictions_df, overall_metrics, domain_specific_metrics = handle_inference(
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
-        config["DOWNSTREAM_MODELS_LIST"],
-        trained_model,
+    print("Inference")
+    predictions_df = handle_inference(
         dataloaders_dict,
+        config["DOWNSTREAM_MODELS_LIST"],
+        config["PREDICTED_FEATURES_LIST"],
+        trained_model,
         criterion,
+        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         device,
+        paths_dict["results"]
+        )
+    
+    print("Metrics")
+    overall_metrics, domain_specific_metrics = handle_metrics(
         config["PREDICTED_FEATURES_LIST"],
         paths_dict["results"]
         )
     
+    print("Visuals")
+    plot_predictions_vs_true(
+        predictions_df,
+        config["PREDICTED_FEATURES_LIST"],
+        paths_dict["results"]
+        )
+
 def train(config, results_path_override = None):
     
-    device = get_device(None)
+    device = get_device()
     n_workers = get_n_workers()
     paths_dict = {"base": setup_folders()}
     
@@ -134,92 +149,103 @@ def train(config, results_path_override = None):
         
         paths_dict["results"] = results_path_override
     
+    print("Data")
     dataset_dicts = handle_data(
         paths_dict["base"],
-        config["DATASETS_IN_USE"],
+        config["SUBSETS_IN_USE"],
         config["DATA"]["DATASETS"],
         config["DATA"]["FILTERS"]["FILTER_ONE_WILDTYPE_PER_DOMAIN"],
         config["PREDICTED_FEATURES_LIST"],
         AMINO_ACIDS
         )
 
+    print("Embeddings")
     dataset_dicts, embedding_size = handle_embeddings(
+        dataset_dicts,
         config["UPSTREAM_MODELS_LIST"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         config["UPSTREAM_MODELS"]["EMBEDDING_LAYERS"],
         config["EMBEDDING_POOL_TYPE_LIST"],
         config["DIMENSIONAL_REDUCTION_CHOICE"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["N_DESIRED_DIMENSIONS"],
+        config["UPSTREAM_MODELS"]["POSTPROCESSING"]["NORMALISE_EMBEDDINGS"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["WILDTYPE_EMBEDDING"]["CONCAT"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["WILDTYPE_EMBEDDING"]["DELTA"],
-        config["DOWNSTREAM_MODELS_LIST"],
-        dataset_dicts,
-        device,
         paths_dict["base"],
+        device,
         n_workers
         )
     
-    dataset_dicts = handle_filtering(
-        dataset_dicts
-        )
-
+    print("Filtering")
+    dataset_dicts = handle_filtering(dataset_dicts)
+    
+    print("Homology")        
     paths_dict["homology"] = handle_homology(
         dataset_dicts,
         paths_dict["base"],
-        config["SPLITS_METHOD_CHOICE"]
+        force_regeneration = True
         )
     
+    print("Splits")
     dataloaders_dict = handle_splits(
-        config["SPLITS_PRIORITY_CHOICE"],
-        config["SPLITS_METHOD_CHOICE"],
+        dataset_dicts,
+        config["SUBSETS_SPLITS_DICT"],
         config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         n_workers,
-        dataset_dicts,
-        config["DATASETS_SPLITS_DICT"],
         paths_dict["homology"],
         paths_dict["results"]
         )
     
+    print("Models")
     model, criterion, optimiser = handle_models(
+        dataloaders_dict,
+        config["DOWNSTREAM_MODELS_LIST"],
+        embedding_size,
+        config["PREDICTED_FEATURES_LIST"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["HIDDEN_LAYERS"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["DROPOUT_LAYERS"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["LEARNING_RATE"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["WEIGHT_DECAY"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MIN_EPOCHS"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MAX_EPOCHS"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["PATIENCE"],
-        config["DOWNSTREAM_MODELS_LIST"],
-        embedding_size,
-        dataloaders_dict,
-        config["PREDICTED_FEATURES_LIST"],
         config["ACTIVATION_FUNCTIONS_LIST"],
         config["LOSS_FUNCTIONS"],
         config["OPTIMISERS"],
-        #rnn_type,
-        #bidirectional,
         paths_dict["results"],
         device
         )
     
+    for dataset_dict in dataset_dicts:
+        
+        print(dataset_dict["unique_key"])
+        print(len(dataset_dict["dataset"]))
+    
+    for name, dataloader in dataloaders_dict.items():
+        
+        print(name)
+        
+        if dataloader != None:
+            print(len(dataloader))
+        else: print("None")
+    
+    print("Training")
     trained_model = handle_training_models(
-        config["DOWNSTREAM_MODELS_LIST"][0],    # For now we only use one downstream model, maybe in the future will add multiple
-        model,
         dataloaders_dict,
-        config["PREDICTED_FEATURES_LIST"],
+        model,
         criterion,
         optimiser,
-        paths_dict["results"],
+        config["PREDICTED_FEATURES_LIST"],
+        embedding_size,
+        config["DOWNSTREAM_MODELS_LIST"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MIN_EPOCHS"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MAX_EPOCHS"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["PATIENCE"],
         device,
-        embedding_size
-    )
-
+        paths_dict["results"]
+        )
+    
 def test(config, results_path_override = None):
     
-    device = get_device(None)
+    device = get_device()
     n_workers = get_n_workers()
     paths_dict = {"base": setup_folders()}
     
@@ -231,96 +257,172 @@ def test(config, results_path_override = None):
         
         paths_dict["results"] = results_path_override
     
+    print("Data")
     dataset_dicts = handle_data(
         paths_dict["base"],
+        config["SUBSETS_IN_USE"],
         config["DATA"]["DATASETS"],
         config["DATA"]["FILTERS"]["FILTER_ONE_WILDTYPE_PER_DOMAIN"],
         config["PREDICTED_FEATURES_LIST"],
         AMINO_ACIDS
         )
-    
+
+    print("Embeddings")
     dataset_dicts, embedding_size = handle_embeddings(
+        dataset_dicts,
         config["UPSTREAM_MODELS_LIST"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         config["UPSTREAM_MODELS"]["EMBEDDING_LAYERS"],
         config["EMBEDDING_POOL_TYPE_LIST"],
         config["DIMENSIONAL_REDUCTION_CHOICE"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["N_DESIRED_DIMENSIONS"],
+        config["UPSTREAM_MODELS"]["POSTPROCESSING"]["NORMALISE_EMBEDDINGS"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["WILDTYPE_EMBEDDING"]["CONCAT"],
         config["UPSTREAM_MODELS"]["POSTPROCESSING"]["WILDTYPE_EMBEDDING"]["DELTA"],
-        config["DOWNSTREAM_MODELS_LIST"],
-        dataset_dicts,
-        device,
         paths_dict["base"],
+        device,
         n_workers
         )
     
-    dataset_dicts = handle_filtering(
-        dataset_dicts
-        )
+    print("Filtering")
+    dataset_dicts = handle_filtering(dataset_dicts)
     
-    datasets_dict["spoof_training_dataset"] = make_spoof_train_dataset(
-        load_training_sequences(config["DOWNSTREAM_MODELS"]["PATH"]),
-        config["PREDICTED_FEATURES_LIST"]
-        )
+    print("Adding spoof train dataset")
+    dataset_dicts = add_spoof_train_dataset(dataset_dicts, config["DOWNSTREAM_MODELS"]["PATH"], config["PREDICTED_FEATURES_LIST"])
     
+    print("Homology")        
     paths_dict["homology"] = handle_homology(
         dataset_dicts,
         paths_dict["base"],
-        config["SPLITS_METHOD_CHOICE"]
+        force_regeneration = True
         )
     
+    print("Remove leakage from inference")
     dataset_dicts = remove_homologous_sequences_from_inference(
         dataset_dicts,
         paths_dict["homology"]
         )
     
+    print("Remove spoof training data")
+    dataset_dicts = [dataset_dict for dataset_dict in dataset_dicts if dataset_dict["unique_key"] != "spoof_training_dataset"]
+    
+    print("Splits")
     dataloaders_dict = handle_splits(
-        config["SPLITS_PRIORITY_CHOICE"],
-        config["SPLITS_METHOD_CHOICE"],
+        dataset_dicts,
+        config["SUBSETS_SPLITS_DICT"],
         config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         n_workers,
-        dataset_dicts,
-        config["DATASETS_SPLITS_DICT"],
         paths_dict["homology"],
         paths_dict["results"]
         )
     
+    print("Models")
     model, criterion, optimiser = handle_models(
+        dataloaders_dict,
+        config["DOWNSTREAM_MODELS_LIST"],
+        embedding_size,
+        config["PREDICTED_FEATURES_LIST"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["HIDDEN_LAYERS"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["DROPOUT_LAYERS"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["LEARNING_RATE"],
         config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["WEIGHT_DECAY"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MIN_EPOCHS"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["MAX_EPOCHS"],
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["PATIENCE"],
-        config["DOWNSTREAM_MODELS_LIST"],
-        embedding_size,
-        dataloaders_dict,
-        config["PREDICTED_FEATURES_LIST"],
         config["ACTIVATION_FUNCTIONS_LIST"],
         config["LOSS_FUNCTIONS"],
         config["OPTIMISERS"],
-        #rnn_type,
-        #bidirectional,
         paths_dict["results"],
         device
         )
-
+    
     trained_model = load_trained_model(
         model,
         config["DOWNSTREAM_MODELS"]["PATH"],
         device
         )
-
-    predictions_df, overall_metrics, domain_specific_metrics = handle_inference(
-        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
-        config["DOWNSTREAM_MODELS_LIST"],
-        trained_model,
+    
+    print("Inference")
+    predictions_df = handle_inference(
         dataloaders_dict,
+        config["DOWNSTREAM_MODELS_LIST"],
+        config["PREDICTED_FEATURES_LIST"],
+        trained_model,
         criterion,
+        config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         device,
+        paths_dict["results"]
+        )
+    
+    print("Metrics")
+    overall_metrics, domain_specific_metrics = handle_metrics(
         config["PREDICTED_FEATURES_LIST"],
         paths_dict["results"]
         )
+
+def get_device() -> torch.device:
+
+    """
+    Determines the best available device (GPU, MPS, or CPU).
+    Want to add XPU/NPU support but drivers are a nightmare so far.
+
+    Returns:
+    
+        - torch.device: The best available device.
+    """
+
+    if torch.cuda.is_available():
+
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+        return torch.device("cuda")
+
+    elif torch.backends.mps.is_available():
+
+        return torch.device("mps")
+
+    else:
+
+        return torch.device("cpu")
+
+def get_n_workers():
+    
+    """
+    Bit of a hacky attempt to judge the number of CPU cores available,
+    looks for "SLURM_JOB_ID" to see if its running on HPC, which might not enjoy having number of cores set,
+    otherwise checks max number of cores on device and takes 1 lower, or 1.
+    """
+    
+    if os.environ.get("SLURM_JOB_ID") is not None:
+        
+        n_workers = 0
+        
+    else:
+        
+        n_workers = max(1, multiprocessing.cpu_count() - 1)
+
+    return n_workers
+
+def setup_folders() -> Path:
+    
+    """
+    
+    """
+    
+    package_folder = Path(__file__).resolve().parent.parent
+    directories = ["embeddings", "homology", "models", "results", "splits"]
+    
+    for directory in directories:
+        
+        directory_path = package_folder / directory
+        directory_path.mkdir(parents = True, exist_ok = True)
+    
+    return package_folder
+
+def get_results_path(package_folder):
+    
+    timestamp = datetime.datetime.now()
+    results_path = package_folder / "results" / (str(timestamp.year) + "-" + str(timestamp.month) + "-" + str(timestamp.day)) / (str(timestamp.hour) + ":" + str(timestamp.minute) + ":" + str(timestamp.second))
+    results_path.mkdir(parents = True, exist_ok = True)
+    shutil.copy((package_folder / "config.json"), (results_path / "config.json"))
+    
+    return results_path

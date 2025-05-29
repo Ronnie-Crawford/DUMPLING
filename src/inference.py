@@ -1,62 +1,30 @@
 # Standard modules
-import math
+import datetime
 
-# Third party modules
+# Third-party modules
+import numpy as np
 import pandas as pd
 import torch
-import numpy as np
-
-# Local modules
-from visuals import plot_input_histogram, plot_predictions_vs_true
-from helpers import get_results_path
-from results import compute_metrics, compute_domain_specific_metrics, save_results, save_overall_metrics, save_domain_specific_metrics
-from visuals import plot_domain_specific_metrics
 
 def handle_inference(
-    batch_size: int,
-    downstream_models,
-    model,
     dataloaders_dict: dict,
+    downstream_models,
+    output_features,
+    trained_model,
     criterion,
+    batch_size: int,
     device,
-    output_features, 
     results_path,
     ) -> tuple[pd.DataFrame, dict, dict]:
-    
-    predictions_df = get_predictions(downstream_models, model, dataloaders_dict["TEST"], criterion, device, output_features, results_path, batch_size)
-    save_results(predictions_df, results_path)
-    overall_metrics = compute_metrics(results_path, output_features)
-    save_overall_metrics(overall_metrics, results_path)
-    domain_specific_metrics = compute_domain_specific_metrics(results_path, output_features)
-    save_domain_specific_metrics(domain_specific_metrics, results_path)
-
-    plot_input_histogram(predictions_df, output_features, results_path)
-    plot_predictions_vs_true(predictions_df, output_features, results_path)
-    plot_domain_specific_metrics(domain_specific_metrics, results_path)
-    
-    return predictions_df, overall_metrics, domain_specific_metrics
-
-def get_predictions(
-    downstream_models: list,
-    trained_model,
-    test_loader,
-    criterion,
-    device: str,
-    output_features: list,
-    results_path,
-    batch_size: int
-    ):
 
     match downstream_models[0]:
         
         case "FFNN":
             
-            test_loss, predictions_df = run_inference_on_ffnn(trained_model, test_loader, criterion, device, output_features, results_path, batch_size)
+            test_loss, predictions_df = run_inference_on_ffnn(trained_model, dataloaders_dict["TEST"], criterion, device, output_features, results_path, batch_size)
     
-        case "LSTM_UNIDIRECTIONAL" | "LSTM_BIDIRECTIONAL" | "GRU_UNIDIRECTIONAL" | "GRU_BIDIRECTIONAL":
-
-            test_loss, predictions_df = run_inference_on_rnn(trained_model, test_loader, criterion, device, output_features, results_path)
-
+    save_results(predictions_df, results_path)
+    
     return predictions_df
 
 def run_inference_on_ffnn(
@@ -124,7 +92,6 @@ def run_inference_on_ffnn(
 
     # Average loss
     average_test_loss = total_loss / len(test_loader)
-    print(f"Inference Loss: {average_test_loss}")
 
     # Concatenate results from all batches
     final_results = {
@@ -141,193 +108,29 @@ def run_inference_on_ffnn(
 
     return average_test_loss, results_df
 
-def old_run_inference_on_ffnn(model, test_loader, criterion, device: str, output_features: list, results_path, batch_size: int):
-
-    model.eval()
-    test_loss = 0.0
+def save_results(results_df, results_path):
     
-    predictions = {}
-    truths = {}
+    pair = results_path.name
+    # strip off the leading "trained_on_"
+    if pair.startswith("trained_on_") and "_tested_on_" in pair:
+        
+        _, rest = pair.split("trained_on_", 1)
+        trained_on, tested_on = rest.split("_tested_on_")
+        
+    else:
+        
+        trained_on, tested_on = "unknown", "unknown"
     
-    for output_feature in output_features:
+    # Header
+    timestamp = datetime.datetime.now().isoformat()
+    header_lines = [
+        f"# Timestamp:  {timestamp}\n",
+        f"# Trained_on: {trained_on}\n",
+        f"# Tested_on:  {tested_on}\n"
+    ]
+    with open((results_path / "results.csv"), "w") as results_file:
         
-        predictions[output_feature] = []
-        truths[output_feature] = []
-        
-    domains = []
-    sequences = []
-
-    with torch.no_grad():
-        
-        for batch in test_loader:
-            
-            inputs = batch["sequence_embedding"].float().to(device)
-            
-            temp_predictions = {}
-            temp_truths = {}
-            masks = {}
-            
-            for output_feature in output_features:
-                
-                temp_truths[output_feature] = batch[f"{output_feature}_value"].float().to(device)
-                masks[output_feature] = batch[f"{output_feature}_mask"].bool().to(device)
-
-            outputs = model(inputs)
-
-            if batch_size > 1:
-                
-                for index, output_feature in enumerate(output_features):
-                
-                    temp_predictions[output_feature] = outputs[:, index].squeeze()
-                
-            else:
-                
-                for index, output_feature in enumerate(output_features):
-                
-                    temp_predictions[output_feature] = outputs[:, index]
-            
-            losses = {}
-            
-            for output_feature in output_features:
-                
-                losses[output_feature] = 0
-                
-            for output_feature in output_features:
-                
-                if temp_predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
-                    
-                    losses[output_feature] = criterion(
-                        temp_predictions[output_feature].masked_select(masks[output_feature]),
-                        temp_truths[output_feature].masked_select(masks[output_feature])
-                        )
-                
-            
-            loss = sum(losses.values())
-            test_loss += loss.item()
-            domains.extend(batch["domain_name"])
-            sequences.extend(batch["aa_seq"])
-            
-            for i in range(len(batch["domain_name"])):
-
-                for output_feature in output_features:
-                    
-                    if masks[output_feature][i]:
-                        
-                        truths[output_feature].append(temp_truths[output_feature][i].item())
-                    
-                    else:
-                        
-                        truths[output_feature].append(math.nan)
-                    
-                    if temp_predictions[output_feature].dim() != 0:
-                        
-                        predictions[output_feature].append(temp_predictions[output_feature][i].item())
-                        
-                    else:
-                        
-                        predictions[output_feature].append(math.nan)
-                        
-    # Calculate the average test loss
-    average_test_loss = test_loss / len(test_loader)
-    print(f"Inference Loss: {average_test_loss}")
-
-    # Create results dataframe
-    results_df = pd.DataFrame({
-        "domain": domains,
-        "sequences": sequences
-    })
+        results_file.writelines(header_lines)
     
-    for output_feature in output_features:
-    
-        results_df[f"{output_feature}_predictions"] = predictions[output_feature]
-        results_df[f"{output_feature}_truth"] = truths[output_feature]
-
-    return average_test_loss, results_df
-
-def run_inference_on_rnn(model, test_loader, criterion, device: str, output_features: list, results_path):
-    
-    model.eval()
-    test_loss = 0.0
-
-    predictions = {feature: [] for feature in output_features}
-    truths = {feature: [] for feature in output_features}
-    domains = []
-    sequences = []
-
-    with torch.no_grad():
-        
-        for batch in test_loader:
-            
-            inputs = batch["sequence_embedding"].float().to(device)
-            lengths = batch["length"].to(device)
-
-            temp_predictions = {}
-            temp_truths = {}
-            masks = {}
-
-            for output_feature in output_features:
-                
-                temp_truths[output_feature] = batch[f"{output_feature}_value"].float().to(device)
-                masks[output_feature] = batch[f"{output_feature}_mask"].bool().to(device)
-
-            outputs = model(inputs, lengths)
-
-            for index, output_feature in enumerate(output_features):
-                
-                temp_predictions[output_feature] = outputs[:, index]
-
-            losses = {}
-            
-            for output_feature in output_features:
-                
-                if temp_predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
-                    
-                    losses[output_feature] = criterion(
-                        temp_predictions[output_feature].masked_select(masks[output_feature]),
-                        temp_truths[output_feature].masked_select(masks[output_feature])
-                    ).item()
-                    
-                else:
-                    
-                    losses[output_feature] = 0.0
-
-            total_loss = sum(losses.values())
-            test_loss += total_loss
-
-            domains.extend(batch.get("domain_name", []))
-            sequences.extend(batch.get("aa_seqs", []))
-
-            batch_size = inputs.size(0)
-            
-            for i in range(batch_size):
-                
-                for output_feature in output_features:
-                    
-                    if masks[output_feature][i]:
-                        
-                        truths[output_feature].append(temp_truths[output_feature][i].item())
-                        predictions[output_feature].append(temp_predictions[output_feature][i].item())
-                        
-                    else:
-                        
-                        truths[output_feature].append(math.nan)
-                        predictions[output_feature].append(math.nan)
-
-    # Calculate the average test loss
-    average_test_loss = test_loss / len(test_loader)
-    print(f"Inference Loss: {average_test_loss}")
-
-    # Create results dataframe
-    results_df = pd.DataFrame({
-        "domain": domains,
-        "sequences": sequences
-    })
-
-    for output_feature in output_features:
-        
-        results_df[f"{output_feature}_predictions"] = predictions[output_feature]
-        results_df[f"{output_feature}_truth"] = truths[output_feature]
-
-    results_df.to_csv(results_path / "results.csv", index=False)
-
-    return average_test_loss, results_df
+    # Data
+    results_df.to_csv(results_path / "results.csv", mode = "a", index = False)

@@ -1,11 +1,25 @@
 # Standard modules
-import copy
 import datetime
+import copy
 
 # Local modules
-from config_loader import config
-from runner import train, test
-from helpers import setup_folders, get_benchmarking_results_path
+from runner import setup_folders, train, test
+
+def all_against_all_benchmarking(config: dict):
+    
+    """
+    Runs benchmarking by training models on each dataset and evaluating them
+    against every dataset. Results are stored clearly separated into training
+    and testing directories.
+    """
+
+    # Setup
+    base_results_folder = setup_folders()
+    benchmarking_directory = create_benchmarking_directory(base_results_folder)
+    trained_model_paths = train_phase(benchmarking_directory, config)
+    test_phase(benchmarking_directory, config, trained_model_paths)
+    
+    return benchmarking_directory
 
 def create_benchmarking_directory(package_folder):
     
@@ -22,118 +36,96 @@ def create_benchmarking_directory(package_folder):
 
     return benchmarking_root
 
-def all_against_all_benchmarking(config: dict, test_label_groups: bool = True):
+def train_phase(benchmarking_directory, config):
     
     """
-    Runs benchmarking by training models on each dataset and evaluating them
-    against every dataset. Results are stored clearly separated into training
-    and testing directories.
+    We train a model on each subset in subsets to use.
+    We assign splits to each subset, if it is the subset we want to train on,
+    we allow 80% of the data to be used to train a model,
+    if it is not the training subset, we set all splits to 0%.
+    This produces one config per subset, which is then used to run the train function.
     """
-
-    # Setup
-    base_results_folder = setup_folders()
-    benchmarking_directory = create_benchmarking_directory(base_results_folder)
-    trained_model_paths = {}
     
-    if test_label_groups:
-        
-        datagroups_to_use = [f"{dataset}-{label}" for dataset, label in config["DATASETS_IN_USE"]]
-        
-    else:
-
-        datagroups_to_use = [dataset for dataset, label in config["DATASETS_IN_USE"] if label == "ALL"]
-
-    # Training phase
     training_results_folder = benchmarking_directory / "train"
     training_results_folder.mkdir(parents = True, exist_ok = True)
+    trained_model_paths = {}
 
-    for training_datagroup_key in datagroups_to_use:
+    #for dataset_name, label_name in config["SUBSETS_IN_USE"]:
+    for dataset_name, label_name in [("APCA_WITHOUT_NEW_DATA", "ALL"), ("CDNA-DP", "ALL")]:
 
-        training_dataset_folder = training_results_folder / training_datagroup_key
-        training_dataset_folder.mkdir(parents = True, exist_ok = True)
-
+        training_subset_key = f"{dataset_name}-{label_name}"
         # Copy and modify training config
         training_config = copy.deepcopy(config)
+        new_splits = {}
 
-        for query_datagroup_key in datagroups_to_use:
+        for query_dataset_name, query_label_name in config["SUBSETS_IN_USE"]:
 
-            if query_datagroup_key == training_datagroup_key:
+            query_subset_key = f"{query_dataset_name}-{query_label_name}"
 
-                splits = {
+            if query_subset_key == training_subset_key:
+
+                new_splits[query_subset_key] = {
                     "TRAIN": 0.8,
-                    "VALIDATION": 0.0,
-                    "TEST": 0.2
-                }
-
-            else:
-
-                splits = {
-                    "TRAIN": 0.0,
                     "VALIDATION": 0.0,
                     "TEST": 0.0
                 }
 
-            dataset_name, label = query_datagroup_key.rsplit("-", 1)
-            
-            if label == "ALL":
-                # Overwrite the base splits on the dataset itself
-                training_config["DATA"]["DATASETS"][dataset_name]["SPLITS"] = splits
-                
             else:
-                # Overwrite the splits of that LABEL in LABEL_COLUMNS
-                training_config["DATA"]["DATASETS"][dataset_name]["LABEL_COLUMNS"][label]["SPLITS"] = splits
 
-        # Set explicit training results path and train
+                new_splits[query_subset_key] = {
+                    "TRAIN": 0.0,
+                    "VALIDATION": 0.0,
+                    "TEST": 0.0
+                }
+    
+        # We end up with one config per subset to train on
+        training_config["SUBSETS_SPLITS_DICT"] = new_splits
+        training_dataset_folder = training_results_folder / training_subset_key
+        training_dataset_folder.mkdir(parents = True, exist_ok = True)
         training_config["DOWNSTREAM_MODELS"]["PATH"] = training_dataset_folder
         train(training_config, results_path_override = training_dataset_folder)
-        trained_model_paths[training_datagroup_key] = training_dataset_folder
+        trained_model_paths[training_subset_key] = training_dataset_folder
+    
+    return trained_model_paths
 
-    # Testing phase
+def test_phase(benchmarking_directory, config, trained_model_paths):
+    
     testing_results_folder = benchmarking_directory / "test"
     testing_results_folder.mkdir(parents = True, exist_ok = True)
 
-    for training_datagroup_key, model_folder_path in trained_model_paths.items():
+    for training_subset_key, model_folder_path in trained_model_paths.items():
 
-        for testing_datagroup_key in datasets_to_use:
-
-            testing_pair_folder_name = f"trained_on_{training_datagroup_key}_tested_on_{testing_datagroup_key}"
-            testing_dataset_folder = testing_results_folder / testing_pair_folder_name
-            testing_dataset_folder.mkdir(parents = True, exist_ok = True)
+        for dataset_name, label_name in config["SUBSETS_IN_USE"]:
+            
+            testing_subset_key = f"{dataset_name}-{label_name}"
             
             # Copy and modify testing config
             testing_config = copy.deepcopy(config)
+            new_splits = {}
+            
+            for query_dataset_name, query_label_name in config["SUBSETS_IN_USE"]:
+                
+                query_subset_key = f"{query_dataset_name}-{query_label_name}"
 
-            for query_datagroup_key in datasets_to_use:
+                if query_subset_key == testing_subset_key:
 
-                if query_datagroup_key == testing_datagroup_key:
-
-                    testing_split_fraction = 0.2 if testing_datagroup_key == training_datagroup_key else 1.0
-                    splits = {
+                    new_splits[query_subset_key] = {
                         "TRAIN": 0.0,
                         "VALIDATION": 0.0,
-                        "TEST": testing_split_fraction
+                        "TEST": 1.0
                     }
 
                 else:
 
-                    splits = {
+                    new_splits[query_subset_key] = {
                         "TRAIN": 0.0,
                         "VALIDATION": 0.0,
                         "TEST": 0.0
                     }
-
-                dataset_name, label = training_datagroup_key.rsplit("-", 1)
-                
-                if label == "ALL":
-                    
-                    testing_config["DATA"]["DATASETS"][dataset_name]["SPLITS"] = splits
-                    
-                else:
-                
-                    testing_config["DATA"]["DATASETS"][dataset_name]["LABEL_COLUMNS"][label]["SPLITS"] = splits
-
-            # Set the trained model's path to load and test
+            
+            testing_config["SUBSETS_SPLITS_DICT"] = new_splits
+            testing_pair_folder_name = f"trained_on_{training_subset_key}_tested_on_{testing_subset_key}"
+            testing_dataset_folder = testing_results_folder / testing_pair_folder_name
+            testing_dataset_folder.mkdir(parents = True, exist_ok = True)
             testing_config["DOWNSTREAM_MODELS"]["PATH"] = model_folder_path
             test(testing_config, results_path_override = testing_dataset_folder)
-
-    return benchmarking_directory

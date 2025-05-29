@@ -1,176 +1,237 @@
 {
-    "OUTPUT_FEATURES": ["fitness"],
-    "EMBEDDING_MODELS" : {
-        "ESM2_T6_8M_UR50D": false,
-        "ESM2_T12_35M_UR50D": false,
-        "ESM2_T30_150M_UR50D": false,
-        "ESM2_T33_650M_UR50D": true,
-        "ESM2_T36_3B_UR50D": false,
-        "ESM2_T48_15B_UR50D": false,
-        "ESMFold": false,
-        "AMPLIFY_120M": false,
-        "AMPLIFY_120M_base": false,
-        "AMPLIFY_350M": false,
-        "AMPLIFY_350M_base": false
-    },
-    "EMBEDDING_LAYERS": [-1],
-    "EMBEDDING_TYPES": ["MEAN"],
-    "NORMALISE_EMBEDDINGS": false,
-    "EXCLUDE_WILDTYPE_INFERENCE": true,
-    "WILDTYPE_CONCAT": true,
-    "WILDTYPE_DELTA": false,
-    "DOWNSTREAM_MODELS": {
-        "LINEAR_REGRESSION": false,
-        "FFNN": true,
-        "LSTM_UNIDIRECTIONAL": false,
-        "LSTM_BIDIRECTIONAL": false,
-        "GRU_UNIDIRECTIONAL": false,
-        "GRU_BIDIRECTIONAL": false,
-        "RESIDUE_CLUSTERING": false
-    },
-    "DATASETS_FOR_TRAINING": ["ROCKLIN_INDELS"],
-    "DATASETS_FOR_INFERENCE": ["ROCKLIN_INDELS"],
-    "AMINO_ACIDS": "ACDEFGHIKLMNPQRSTVWY",
-    "SPLITS": {
-        "TRAINING_SIZE": 0.8,
-        "VALIDATION_SIZE": 0.00,
-        "TESTING_SIZE": 0.2
-    },
-    "MODEL_ARCHITECTURE": {
-        "HIDDEN_LAYERS": [1000, 16],
-        "DROPOUT_LAYERS": [0, 0, 0],
-        "WEIGHT_DECAY": 0.00010,
-        "ACTIVATION_FUNCTIONS": {
-            "RELU": false,
-            "LEAKYRELU": false,
-            "ELU": false,
-            "GELU": true,
-            "SELU": false
+    "DATA": {
+        "DATASET_GROUPS": {
+            "APCA_WITHOUT_NEW_DATA": {
+                "ALL": true,
+                "SUBSTITUTION": true,
+                "INSERTION": true,
+                "DELETION": true
+            },
+            "CDNA-DP": {
+                "ALL": true,
+                "SUBSTITUTION": true,
+                "INSERTION": true,
+                "DELETION": true
+            },
+            "PROTEIN_GYM_INDELS": {
+                "ALL": false
+            },
+            "MAGDA_TEST": {
+                "ALL": false
+            }
         },
-        "LOSS_FUNCTIONS": {
-            "MSELOSS": false,
-            "MAELOSS": true,
-            "HUBERLOSS": false
+        "DATASETS": {
+            "APCA_WITHOUT_NEW_DATA": {
+                "PATH": "data/combined_datasets/apca_without_new_indels.csv",
+                "DOMAIN_NAME_COLUMN": "domain_name",
+                "WT_FLAG_COLUMN": "is_wt",
+                "AA_SEQ_COLUMN": "aa_seq",
+                "LABEL_COLUMNS": {
+                    "ALL": {
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "SUBSTITUTION": {
+                        "COLUMN_NAME": "is_substitution",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "INSERTION": {
+                        "COLUMN_NAME": "is_insertion",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "DELETION": {
+                        "COLUMN_NAME": "is_deletion",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    }
+                },
+                "PREDICTED_FEATURE_COLUMNS": {
+                    "APCA_FITNESS": "fitness"
+                }
+            },
+            "MAGDA_TEST": {
+                "PATH": "data/magda/data_with_wt_column_magda.csv",
+                "DOMAIN_NAME_COLUMN": "domain",
+                "WT_FLAG_COLUMN": "is_WT",
+                "AA_SEQ_COLUMN": "aa_seq",
+                "SPLITS": {
+                    "TRAIN": 0.2,
+                    "VALIDATION": 0.0,
+                    "TEST": 0.2
+                    },
+                "LABEL_COLUMNS": {
+                    "ALL": {
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    }
+                },
+                "PREDICTED_FEATURE_COLUMNS": {
+                    "APCA_FITNESS": "scaled_fitness"
+                }
+                
+            },
+            "APCA_WITH_NEW_DATA": {
+                "PATH": "data/combined_datasets/apca_with_new_indels.csv",
+                "DOMAIN_NAME_COLUMN": "domain_name",
+                "WT_FLAG_COLUMN": "is_wt",
+                "AA_SEQ_COLUMN": "aa_seq",
+                "LABEL_COLUMNS": {
+                    "ALL": {
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "SUBSTITUTION": {
+                        "COLUMN_NAME": "is_substitution",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "INSERTION": {
+                        "COLUMN_NAME": "is_insertion",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "DELETION": {
+                        "COLUMN_NAME": "is_deletion",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    }
+                },
+                "PREDICTED_FEATURE_COLUMNS": {
+                    "APCA_FITNESS": "fitness"
+                }
+            },
+            "CDNA-DP": {
+                "PATH": "data/combined_datasets/cdna-dp.csv",
+                "DOMAIN_NAME_COLUMN": "domain_name",
+                "WT_FLAG_COLUMN": "is_wt",
+                "AA_SEQ_COLUMN": "aa_seq",
+                "LABEL_COLUMNS": {
+                    "ALL": {
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "SUBSTITUTION": {
+                        "COLUMN_NAME": "is_substitution",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "INSERTION": {
+                        "COLUMN_NAME": "is_insertion",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    },
+                    "DELETION": {
+                        "COLUMN_NAME": "is_deletion",
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    }
+                },
+                "PREDICTED_FEATURE_COLUMNS": {
+                    "APCA_FITNESS": "fitness_type_1"
+                }
+            },
+            "PROTEIN_GYM_INDELS": {
+                "PATH": "data/protein_gym/protein_gym_indels.csv",
+                "DOMAIN_NAME_COLUMN": "domain_name",
+                "WT_FLAG_COLUMN": "is_wt",
+                "AA_SEQ_COLUMN": "aa_seq",
+                "LABEL_COLUMNS": {
+                    "ALL": {
+                        "SPLITS": {"TRAIN": 0.8, "VALIDATION": 0.0, "TEST": 0.2}
+                    }
+                },
+                "PREDICTED_FEATURE_COLUMNS": {
+                    "DMS_SCORE": "DMS_score"
+                }
+            }
         },
-        "OPTIMISERS": {
-            "ADAM": true,
-            "SGD": false,
-            "RMSPROP": false,
-            "ADAMW": false
+        "PREDICTED_FEATURES": {
+            "APCA_FITNESS": false,
+            "CDNAPD_ENERGY": false,
+            "DMS_SCORE": true
+        },
+        "SPLITS_METHOD": {
+            "RANDOM": false,
+            "HOMOLOGOUS_AWARE": true
+        },
+        "SPLITS_PRIORITY": {
+            "PRESERVE_TRAINING": true,
+            "PRESERVE_INFERENCE": false,
+            "COMPROMISE": false
+        },
+        "FILTERS": {
+            "FILTER_ONE_WILDTYPE_PER_DOMAIN": true,
+            "EXCLUDE_WILDTYPE_INFERENCE": true
         }
     },
-    "TRAINING_PARAMETERS": {
-        "BATCH_SIZE": 128,
-        "LEARNING_RATE": 0.005,
-        "MIN_EPOCHS": 10,
-        "MAX_EPOCHS": 100,
-        "PATIENCE": 3,
-        "RANDOM_STATE": 1,
-        "N_WORKERS": 0
+    "UPSTREAM_MODELS" : {
+        "MODELS": {
+            "ESM2_T6_8M_UR50D": false,
+            "ESM2_T12_35M_UR50D": false,
+            "ESM2_T30_150M_UR50D": false,
+            "ESM2_T33_650M_UR50D": true,
+            "ESM2_T36_3B_UR50D": false,
+            "ESM2_T48_15B_UR50D": false,
+            "ESMFold": false,
+            "AMPLIFY_120M": false,
+            "AMPLIFY_120M_base": false,
+            "AMPLIFY_350M": false,
+            "AMPLIFY_350M_base": false
+        },
+        "EMBEDDING_LAYERS": [-1],
+        "EMBEDDING_POOL_TYPES": {
+            "RAW": false,
+            "MEAN": true,
+            "MAX": false,
+            "MIN": false,
+            "STD": false,
+            "PC1": false,
+            "PC2": false,
+            "PC3": false,
+            "LDSP": false
+        },
+        "POSTPROCESSING": {
+            "NORMALISE_EMBEDDINGS": false,
+            "WILDTYPE_EMBEDDING": {
+                "CONCAT": false,
+                "DELTA": true
+            },
+            "DIMENSIONAL_REDUCTION": {
+                "None": true,
+                "PCA": false
+            },
+            "N_DESIRED_DIMENSIONS": 500
+        }
     },
-    "HYPERPARAMETER_TUNING": {
-        "SEARCH_ITERATIONS": 10,
-        "MIN_BATCH_SIZE": 4,
-        "MAX_BATCH_SIZE": 256,
-        "MIN_HIDDEN_LAYERS": 1,
-        "MAX_HIDDEN_LAYERS": 4,
-        "MIN_HIDDEN_LAYER_SIZE": 2,
-        "MAX_HIDDEN_LAYER_SIZE": 16,
-        "MIN_DROPOUT": 0.0,
-        "MAX_DROPOUT": 0.5,
-        "MIN_LEARNING_RATE": 0.001,
-        "MAX_LEARNING_RATE": 0.01,
-        "MIN_WEIGHT_DECAY": 0,
-        "MAX_WEIGHT_DECAY": 0.001
-    },
-    "DATASETS" : {
-        "MAGDA" : {
-            "PATH" : "magda/data_main_magda.csv",
-            "DOMAIN_NAME_COLUMN" : "domain",
-            "WT_FLAG_COLUMN": "",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
-            "ENERGY_COLUMN": "",
-            "FITNESS_COLUMN" : "scaled_fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": null
+    "DOWNSTREAM_MODELS": {
+        "PATH": "",
+        "MODEL_TYPE": {
+            "LINEAR_REGRESSION": false,
+            "FFNN": true,
+            "LSTM_UNIDIRECTIONAL": false,
+            "LSTM_BIDIRECTIONAL": false,
+            "GRU_UNIDIRECTIONAL": false,
+            "GRU_BIDIRECTIONAL": false
         },
-        "TONI" : {
-            "PATH" : "toni/data_main_toni.tsv",
-            "DOMAIN_NAME_COLUMN" : "domain_ID",
-            "WT_FLAG_COLUMN": "",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
-            "ENERGY_COLUMN": "",
-            "FITNESS_COLUMN" : "normalized_fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": null
+        "MODEL_ARCHITECTURE": {
+            "HIDDEN_LAYERS": [1000, 1000, 500, 16],
+            "DROPOUT_LAYERS": [0, 0, 0.15],
+            "WEIGHT_DECAY": 0.00007,
+            "ACTIVATION_FUNCTIONS": {
+                "RELU": false,
+                "LEAKYRELU": false,
+                "ELU": false,
+                "GELU": true,
+                "SELU": false
+            },
+            "LOSS_FUNCTIONS": {
+                "MSELOSS": true,
+                "MAELOSS": false
+            },
+            "OPTIMISERS": {
+                "ADAM": true,
+                "SGD": false,
+                "RMSPROP": false,
+                "ADAMW": false
+            }
         },
-        "ROCKLIN" : {
-            "PATH" : "rocklin/data_main_rocklin.csv",
-            "DOMAIN_NAME_COLUMN" : "name",
-            "WT_FLAG_COLUMN": "",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
-            "ENERGY_COLUMN": "ddG_ML",
-            "FITNESS_COLUMN" : "",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": "."
-        },
-        "ROCKLIN_INDELS" : {
-            "PATH" : "rocklin_indels/indels_and_wt_natural_rocklin_with_fitness_v2.csv",
-            "DOMAIN_NAME_COLUMN" : "name",
-            "WT_FLAG_COLUMN": "wt_flag",
-            "VARIANT_AA_SEQ_COLUMN" : "aa_seq",
-            "ENERGY_COLUMN": "ddG_ML",
-            "FITNESS_COLUMN" : "fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": "."
-        },
-        "FIREPROT" : {
-            "PATH" : "fireprot/",
-            "DOMAIN_NAME_COLUMN" : "",
-            "WT_FLAG_COLUMN": "",
-            "VARIANT_AA_SEQ_COLUMN" : "",
-            "ENERGY_COLUMN": "ddG",
-            "FITNESS_COLUMN" : "",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": null
-        },
-        "VAMP_SEQ": {
-            "PATH":"vamp_seq/data_main_vamp_seq.csv",
-            "DOMAIN_NAME_COLUMN":"mutant",
-            "WT_FLAG_COLUMN": "",
-            "VARIANT_AA_SEQ_COLUMN":"mutated_sequence",
-            "ENERGY_COLUMN": "",
-            "FITNESS_COLUMN":"DMS_score",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": null
-        },
-        "FOLDOME": {
-            "PATH":"foldome/allFitnessVariants.csv",
-            "DOMAIN_NAME_COLUMN":"domainID",
-            "WT_FLAG_COLUMN": "",
-            "VARIANT_AA_SEQ_COLUMN":"aa_seq",
-            "ENERGY_COLUMN": "",
-            "FITNESS_COLUMN":"fitness",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": null
-        },
-        "CUSTOM": {
-            "PATH":"",
-            "DOMAIN_NAME_COLUMN":"",
-            "WT_FLAG_COLUMN": "",
-            "VARIANT_AA_SEQ_COLUMN":"",
-            "ENERGY_COLUMN": "",
-            "FITNESS_COLUMN":"",
-            "IS_ENERGY_REVERSED": false,
-            "IS_FITNESS_REVERSED": false,
-            "DROP_DOMAIN_NAME_EXTENSION": null
+        "TRAINING_PARAMETERS": {
+            "BATCH_SIZE": 24,
+            "LEARNING_RATE": 0.005,
+            "MIN_EPOCHS": 10,
+            "MAX_EPOCHS": 100,
+            "PATIENCE": 3,
+            "RANDOM_STATE": 1,
+            "N_WORKERS": 0
         }
     }
 }

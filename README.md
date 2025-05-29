@@ -1,12 +1,6 @@
 # Protein Domain Stability Predictor
 
-The goal of this project is to explore how different architectures and how different datasets, and features of datasets, impact the accuracy of predicting fitness and stability of protein domains.
-
-Current architectures that have been tried:
-
-- An RNN autoencoder to represent a sequence, with a downstream fitness predictor.
-- ESM2 embeddings with downstream stability prediction module.
-- AMPLIFY embeddings with downstream prediction module.
+This is a variant effect predictor which attempts to predict the fitness, or other feature, of a variant protein relative to the wildtype protein. It only requires the wildtype and mutant sequence.
 
 ## Environment
 
@@ -25,23 +19,22 @@ All configurations such as data paths, model parameters, and training parameters
 
 ## Flags
 
-- ```--device```                    - Can overide automatic device specification, to run package on ```CPU```, ```MPS``` or ```CUDA```.
-- ```--embeddings```                - Can be used to
-- ```--splits```                    - Choose how to split data; ```homologous-aware``` to ensure homologous domains are in the same split (requires domain family file), or ```random``` for entirely random assigning.
-- ```--tune```                      - Choose whether to tune hyperparameters; if blank, hyperparameters in the config will be used, ```grid-search``` iterates over every possible value within config ranges, ```random-search``` searches random values within config ranges.
+- ```--run```       - Allows the selection of which pipeline to run, currently the options are ```[train-test]```, ```[train]```, ```[test]```, or ```[ava-benchmarking]```.
 
-So for example, ```python src --splits homologous-aware --tune random-search``` would run with the automatically determined best-available device, the data would be split ensuring homologous domains are in the same splits, and the optimum hyperparameters would be searched for randomly.
+The train-test option trains once on all selected dataset subsets together, and then tests on all selected subsets together, as described by the splits by label options in the config. The ava-benchmarking (all-against-all) trains a separate model on each subset, and then tests separately on each subset, generating a matrix of results for each pair of training and testing.
 
 ## Modules
 
-- ```__main__.py```                 - The main function which reads flags and executes functions based on user selection.
-- ```config_loader.py```            - Reads the values in the config file and parses them for the rest of the package to use.
-- ```datasets.py```                 - Defines the dataset class to store data in, and contains a function to set up datasets from config.
-- ```helpers.py```                  - Contains small functions used by other modules.
-- ```inference.py```                - Contains functions to run trained models to get predictions from datasets.
-- ```models.py```                   - Contains model classes, and function to set it up from config.
-- ```preprocessing.py```            - Contains functions for processing data before it is used for training or inference.
-- ```embeddings.py```               - Contains functions for fetching and using protein language models to generate upstream embeddings.
-- ```splits.py```                   - Contains functions to read homology files and split data based on config.
-- ```training.py```                 - Contains functions to train models on datasets.
-- ```tuning.py```                   - Contains functions to find optimal hyperparameters.
+- ```__main__.py```         - The main function which reads flags and executes functions based on user selection.
+- ```config_loader.py```    - Reads the values in the config file and parses them for the rest of the package to use.
+- ```datasets.py```         - Defines the dataset class to store data in, and contains a function to set up datasets from config.
+- ```inference.py```        - Contains functions to run trained models to get predictions from datasets.
+- ```models.py```           - Contains model classes, and function to set it up from config.
+- ```embeddings.py```       - Contains functions for fetching and using protein language models to generate upstream embeddings.
+- ```splits.py```           - Contains functions to read homology files and split data based on config.
+- ```training.py```         - Contains functions to train models on datasets.
+- ```benchmarking.py```     - First trains a model on each selected subset, then tests each model on each subset selected for testing.
+- ```homology.py```         - Makes use of ```mmseqs2``` to find homology clusters within all data, so that data homologous to training data is not used in testing, reducing model leakage.
+- ```metrics.py```          - Uses results of inference to calculate performance metrics for overall and domain-specific results.
+- ```runner.py```           - This module outlines the structure of each pipeline, calling other modules as needed.
+- ```visuals.py```          - Handles the creation of any plots and figures.
