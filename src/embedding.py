@@ -1,4 +1,5 @@
 #Standard modules
+import gc
 import itertools
 import hashlib
 import pickle
@@ -238,7 +239,7 @@ def fetch_embeddings(
     
     pooled_batch_embeddings = []
     full_embeddings = [None] * len(dataset)
-    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers, persistent_workers = True)
+    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers, persistent_workers = False)
 
     with torch.no_grad():
 
@@ -291,6 +292,9 @@ def fetch_embeddings(
             for index in range(len(sequences)):
 
                 full_embeddings[batch_index * batch_size + index] = pooled_batch_embeddings[index]
+
+    del dataloader
+    gc.collect()
 
     return full_embeddings
 

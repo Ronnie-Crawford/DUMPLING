@@ -4,6 +4,7 @@ import multiprocessing
 import datetime
 import shutil
 from pathlib import Path
+import gc
 
 # Third-party modules
 import torch
@@ -214,19 +215,6 @@ def train(config, results_path_override = None):
         device
         )
     
-    for dataset_dict in dataset_dicts:
-        
-        print(dataset_dict["unique_key"])
-        print(len(dataset_dict["dataset"]))
-    
-    for name, dataloader in dataloaders_dict.items():
-        
-        print(name)
-        
-        if dataloader != None:
-            print(len(dataloader))
-        else: print("None")
-    
     print("Training")
     trained_model = handle_training_models(
         dataloaders_dict,
@@ -242,6 +230,8 @@ def train(config, results_path_override = None):
         device,
         paths_dict["results"]
         )
+    
+    gc.collect()
     
 def test(config, results_path_override = None):
     
@@ -357,6 +347,8 @@ def test(config, results_path_override = None):
         config["PREDICTED_FEATURES_LIST"],
         paths_dict["results"]
         )
+    
+    gc.collect()
 
 def get_device() -> torch.device:
 

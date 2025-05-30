@@ -1,6 +1,7 @@
 # Standard modules
 import pickle
 from pathlib import Path
+import random
 
 # Third-party modules
 import numpy as np
@@ -43,14 +44,37 @@ def handle_splits(
     datasets_split_indices = get_datasets_split_indices(
         dataset_dicts,
         homology_family_dict,
-        family_to_split_assignment
+        family_to_split_assignment,
+        datasets_splits_dict
     )
+    
+    # === DEBUG STEP 1: training allocation per subset ===
+    for ds in dataset_dicts:
+        key = ds["unique_key"]
+        total = len(ds["dataset"])
+        train_count = len(datasets_split_indices[key]["TRAIN"])
+        print(
+            f"DEBUG STEP 1 – {key} TRAIN: "
+            f"{train_count}/{total} "
+            f"({train_count/total*100:.1f}%)"
+        )
     
     # Filter datasets
     split_datasets = construct_filtered_datasets(
         dataset_dicts,
         datasets_split_indices,
         datasets_splits_dict
+        )
+    
+    # === DEBUG STEP 2: raw TEST allocation per subset ===
+    for ds in dataset_dicts:
+        key = ds["unique_key"]
+        subset_total = len(ds["dataset"])
+        raw_test_count = len(datasets_split_indices[key]["TEST"])
+        print(
+            f"DEBUG STEP 2 – {key} RAW TEST: "
+            f"{raw_test_count}/{subset_total} "
+            f"({raw_test_count/subset_total*100:.1f}%)"
         )
     
     # Remove wildtype sequences from inference splits
@@ -133,6 +157,12 @@ def assign_families_to_splits(
     datasets_splits_dict
 ):
 
+    """
+    This function is now a lot more permissive, rather than trying to match splits exactly;
+    instead it tries to ensure that every subset has its desired splits filled,
+    this leaves a lot of subset-splits overfilled, but this is now left to the next function to trim.
+    """
+
     family_to_split_assignment = {}
     split_options = ["TRAIN", "VALIDATION", "TEST", "UNASSIGNED"]
     subset_names = [dataset_dict["unique_key"] for dataset_dict in dataset_dicts]
@@ -202,32 +232,31 @@ def select_best_split(
     but for now it is okay.
     """
     
-    best_split = None
+    best_split = "UNASSIGNED"
     min_total_deviation = float("inf")
 
     for split in ["TRAIN", "VALIDATION", "TEST"]:
         
-        total_deviation = 0
+        split_deviation = 0
+        accept_split = False
         
         for dataset_dict in dataset_dicts:
             
-            count_in_subset = family_subset_counts[family_id][dataset_dict["unique_key"]]
-            
-            current_count = split_counts_per_subset[dataset_dict["unique_key"]][split]
-            #projected = current_count + count_in_subset
-            desired_count = desired_split_sizes[dataset_dict["unique_key"]][split]
-            
-            subset_deviation = current_count - desired_count
-            total_deviation += subset_deviation
+            family_sequences_in_subset_count = family_subset_counts[family_id][dataset_dict["unique_key"]]
+            subset_sequences_in_split_count = split_counts_per_subset[dataset_dict["unique_key"]][split]
+            projected_subset_sequence_in_split_count = subset_sequences_in_split_count + family_sequences_in_subset_count
+            desired_subset_sequence_in_split_count = desired_split_sizes[dataset_dict["unique_key"]][split]
+            subset_deviation = projected_subset_sequence_in_split_count - desired_subset_sequence_in_split_count
         
-        if total_deviation < min_total_deviation:
+            if subset_deviation <= 0:
             
-            min_total_deviation = total_deviation
+                accept_split = True
+                split_deviation += subset_deviation
+        
+        if split_deviation < min_total_deviation and accept_split == True:
+            
+            min_total_deviation = split_deviation
             best_split = split
-    
-    if min_total_deviation >= 0:
-        
-        best_split = "UNASSIGNED"
     
     return best_split
 
@@ -242,25 +271,54 @@ def update_split_counts(family_id, family_subset_counts, split_counts_per_subset
 def get_datasets_split_indices(
     dataset_dicts: list,
     homology_family_dict: dict,
-    family_to_split_assignment
+    family_to_split_assignment,
+    datasets_splits_dict
     ):
     
+    """
+    This function now accepts the potentially overfilled subset-splits from the assign families function
+    and then trims out individual sequences randomly, until each subset-split is as close as it can get to its
+    desired number of sequences.
+    """
+    
+    # Build a reverse map: sequence -> assigned split
+    sequence_to_split: Dict[str, str] = {}
+    
+    for family_id, split in family_to_split_assignment.items():
+        
+        for sequence in homology_family_dict.get(family_id, []):
+            
+            sequence_to_split[sequence] = split
+            
     datasets_split_indices = {dataset_dict["unique_key"]: {"TRAIN": [], "VALIDATION": [], "TEST": [], "UNASSIGNED": []} for dataset_dict in dataset_dicts}
-    sequence_to_family = {sequence: family_id for family_id, sequences in homology_family_dict.items() for sequence in sequences}
+    
+    # Raw assignment by reading each dataset’s sequences
+    for dataset_dict in dataset_dicts:
+        
+        subset = dataset_dict["unique_key"]
+            
+        for index, sequence in enumerate(dataset_dict["dataset"].aa_seqs):
+            
+            assigned_split = sequence_to_split.get(sequence, "UNASSIGNED")
+            datasets_split_indices[subset][assigned_split].append(index)
 
     for dataset_dict in dataset_dicts:
         
-        dataset_name = dataset_dict["unique_key"]
-        dataset = dataset_dict["dataset"]
+        subset_name = dataset_dict["unique_key"]
+        subset = dataset_dict["dataset"]
+        total_sequences_count = len(subset.aa_seqs)
         
-        for index, sequence in enumerate(dataset.aa_seqs):
+        # For each real split, calculate allowed count and prune if needed
+        for split in ["TRAIN", "VALIDATION", "TEST"]:
             
-            family_id = sequence_to_family.get(sequence)
-            assigned_split = family_to_split_assignment.get(family_id)
-            
-            if assigned_split:
+            desired_sequences_count = int(total_sequences_count * datasets_splits_dict[subset_name][split])
+            current_sequences = datasets_split_indices[subset_name][split]
+        
+            if len(current_sequences) > desired_sequences_count:
                 
-                datasets_split_indices[dataset_name][assigned_split].append(index)
+                kept_sequences = random.sample(current_sequences, desired_sequences_count)
+                datasets_split_indices[subset_name][split] = kept_sequences
+                #datasets_split_indices[subset]["UNASSIGNED"].extend(dropped)
 
     return datasets_split_indices
 
@@ -269,6 +327,10 @@ def construct_filtered_datasets(
     datasets_split_indices,
     datasets_splits_dict: dict
     ):
+    
+    """
+        
+    """
     
     split_datasets = { "TRAIN": [], "VALIDATION": [], "TEST": [], "UNASSIGNED": [] }
     
@@ -366,7 +428,7 @@ def splits_to_loaders(
             shuffle = shuffle_flag,
             drop_last = drop_last_flag,
             num_workers = n_workers,
-            persistent_workers = True,
+            persistent_workers = False,
             collate_fn = collate_fn
         )
 
@@ -464,7 +526,15 @@ def remove_homologous_sequences_from_inference(
             
             continue
 
+        # === DEBUG STEP 3: homology filter effect on this subset ===
+        pre_filter = len(dataset.aa_seqs)
         keep_indices = [index for index, sequence in enumerate(dataset.aa_seqs) if sequence_to_family.get(sequence) not in used_families]
+        post_filter = len(keep_indices)
+        print(
+            f"DEBUG STEP 3 – {name}: "
+            f"{post_filter}/{pre_filter} "
+            f"({post_filter/pre_filter*100:.1f}%) variants kept"
+        )
         dataset_dicts[index]["dataset"] = dataset.filter_by_indices(keep_indices)
 
     return dataset_dicts

@@ -1,5 +1,6 @@
 # Standard modules
 import datetime
+import gc
 
 # Third-party modules
 import numpy as np
@@ -105,6 +106,9 @@ def run_inference_on_ffnn(
         final_results[f"{feature}_truth"] = np.concatenate(truths_dict[feature])
 
     results_df = pd.DataFrame(final_results)
+    
+    del test_loader
+    gc.collect()
 
     return average_test_loss, results_df
 

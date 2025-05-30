@@ -1,5 +1,6 @@
 # Standard module
 from pathlib import Path
+import gc
 
 # Third-party modules
 import torch
@@ -209,7 +210,8 @@ def train_ffnn_from_embeddings(
 
         model.load_state_dict(best_model)
 
-    #plot_loss(training_loss_list, validation_loss_list, results_path)
+    del dataloaders["TRAIN"], dataloaders["VALIDATION"]
+    gc.collect()
 
     return model
 
