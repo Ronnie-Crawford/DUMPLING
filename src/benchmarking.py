@@ -50,8 +50,8 @@ def train_phase(benchmarking_directory, config):
     training_results_folder.mkdir(parents = True, exist_ok = True)
     trained_model_paths = {}
 
-    #for dataset_name, label_name in config["SUBSETS_IN_USE"]:
-    for dataset_name, label_name in [("APCA_WITHOUT_NEW_DATA", "ALL"), ("CDNA-DP", "ALL")]:
+    for dataset_name, label_name in config["SUBSETS_IN_USE"]:
+    #for dataset_name, label_name in [("APCA_WITHOUT_NEW_DATA", "ALL"), ("CDNA-DP", "ALL")]:
 
         training_subset_key = f"{dataset_name}-{label_name}"
         # Copy and modify training config
