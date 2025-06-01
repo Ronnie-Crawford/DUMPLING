@@ -10,14 +10,40 @@ from scipy.stats import pearsonr, spearmanr
 
 def handle_metrics(output_features, results_path):
     
-    overall_metrics = compute_overall_metrics(results_path, output_features)
+    results_file = results_path / "results.csv"
+    results_df = pd.read_csv(results_file, comment = "#")
+    
+    overall_metrics = compute_overall_metrics(results_df, output_features)
     save_overall_metrics(overall_metrics, results_path)
-    domain_specific_metrics = compute_domain_specific_metrics(results_path, output_features)
+    domain_specific_metrics = compute_domain_specific_metrics(results_df, output_features)
     save_domain_specific_metrics(domain_specific_metrics, results_path)
     
     return overall_metrics, domain_specific_metrics
+
+def compute_metrics_per_subset(output_features, results_path):
     
-def compute_overall_metrics(results_path: str, output_features: list, min_count: int = 10) -> dict:
+    results_file = results_path / "results.csv"
+    results_df = pd.read_csv(results_file, comment = "#")
+    metrics_by_subset = {}
+    
+    for subset_name in results_df["subset"].unique():
+
+        subset_df = results_df[results_df["subset"] == subset_name].copy()
+        overall_metrics = compute_overall_metrics(subset_df, output_features)
+        #save_overall_metrics(overall_metrics, results_path)
+        domain_specific_metrics = compute_domain_specific_metrics(subset_df, output_features)
+        #save_domain_specific_metrics(domain_specific_metrics, results_path)
+        metrics_by_subset[subset_name] = {"overall": overall_metrics, "domain": domain_specific_metrics}
+        
+    metrics_path = results_path / "metrics_by_subset.json"
+    
+    with open(metrics_path, "w") as metrics_file:
+        
+        json.dump(metrics_by_subset, metrics_file, indent = 2)
+
+    return metrics_by_subset
+
+def compute_overall_metrics(results_df, output_features: list, min_count: int = 10) -> dict:
     
     """
     Reads a CSV file containing Predicted Energy and True Energy or
@@ -34,23 +60,6 @@ def compute_overall_metrics(results_path: str, output_features: list, min_count:
     """
 
     overall_metrics = {}
-    csv_path = results_path / "results.csv"
-
-    try:
-            
-        results = pd.read_csv(csv_path, comment = "#")
-
-    except FileNotFoundError:
-
-        raise FileNotFoundError(f"The file {csv_path} was not found.")
-
-    except pd.errors.EmptyDataError:
-
-        raise ValueError(f"The file {csv_path} is empty.")
-
-    except Exception as e:
-
-        raise Exception(f"An error occurred while reading the file {csv_path}: {e}")
 
     for output_feature in output_features:
         
@@ -58,12 +67,12 @@ def compute_overall_metrics(results_path: str, output_features: list, min_count:
         predicted_column = f"{output_feature}_predictions"
         truth_column = f"{output_feature}_truth"
             
-        if predicted_column not in results.columns or truth_column not in results.columns:
+        if predicted_column not in results_df.columns or truth_column not in results_df.columns:
 
             raise ValueError(f"CSV file must contain '{predicted_column}' and '{truth_column}' columns.")
         
         # Drop rows with NaNs in either predicted or true columns
-        filtered_df = results[[predicted_column, truth_column]].dropna()
+        filtered_df = results_df[[predicted_column, truth_column]].dropna()
         valid_count = len(filtered_df)
         
         # Check if the number of valid data points meets the minimum threshold
@@ -125,26 +134,9 @@ def compute_overall_metrics(results_path: str, output_features: list, min_count:
     
     return overall_metrics
 
-def compute_domain_specific_metrics(results_path: str, output_features: list, min_count: int = 10):
+def compute_domain_specific_metrics(results_df, output_features: list, min_count: int = 10):
     
     metrics = {}
-    csv_path = results_path / "results.csv"
-    
-    try:
-            
-        results = pd.read_csv(csv_path, comment = "#")
-
-    except FileNotFoundError:
-
-        raise FileNotFoundError(f"The file {csv_path} was not found.")
-
-    except pd.errors.EmptyDataError:
-
-        raise ValueError(f"The file {csv_path} is empty.")
-
-    except Exception as e:
-
-        raise Exception(f"An error occurred while reading the file {csv_path}: {e}")
     
     for output_feature in output_features:
         
@@ -153,11 +145,11 @@ def compute_domain_specific_metrics(results_path: str, output_features: list, mi
         predicted_column = f"{output_feature}_predictions"
         truth_column = f"{output_feature}_truth"
             
-        if predicted_column not in results.columns or truth_column not in results.columns:
+        if predicted_column not in results_df.columns or truth_column not in results_df.columns:
 
             raise ValueError(f"CSV file must contain '{predicted_column}' and '{truth_column}' columns.")
     
-        filtered_df = results[[domain_column, predicted_column, truth_column]].dropna()
+        filtered_df = results_df[[domain_column, predicted_column, truth_column]].dropna()
         valid_count = len(filtered_df)
         
         # Check if the number of valid data points meets the minimum threshold

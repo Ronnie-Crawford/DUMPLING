@@ -34,6 +34,67 @@ def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list
         plt.close()
 
 def plot_benchmark_grid(results_base_path, output_feature, minimum_valid_datapoints = 10):
+        
+    train_folders = sorted([path for path in Path(results_base_path).iterdir() if path.is_dir()])
+    train_dataset_names = [path.name.replace("trained_on_", "") for path in train_folders]
+    train_roots = {name: (results_base_path / f"trained_on_{name}") for name in train_dataset_names}
+    
+    # Pick any one train folder to extract test_subset names; assume all use the same set of test subsets.
+    sample_folder = train_folders[0]
+    metrics_path  = sample_folder / "metrics_by_subset.json"
+
+    with open(metrics_path, "r") as metrics_file:
+        
+        sample_metrics = json.load(metrics_file)
+        
+    test_dataset_names = sorted(sample_metrics.keys())
+    
+    # Create grid
+    fig, axes = plt.subplots(
+        len(test_dataset_names),
+        len(train_dataset_names),
+        figsize = (4 * len(train_dataset_names), 4 * len(test_dataset_names)),
+        squeeze = False
+    )
+    axes = np.atleast_2d(axes)
+
+    # Loop through axes
+    for col_idx, train_subset in enumerate(train_dataset_names):
+        
+        current_folder = train_roots[train_subset]
+        preds_df = pd.read_csv(current_folder / "results.csv", comment = "#")
+        
+        with open(current_folder / "metrics_by_subset.json", "r") as mf:
+            
+            metrics_by_subset = json.load(mf)
+
+        for row_idx, test_subset in enumerate(test_dataset_names):
+            
+            ax = axes[row_idx, col_idx]
+            ax.cla()
+
+            # Filter only the rows for this particular test_subset
+            cell_df = preds_df[preds_df["subset"] == test_subset].copy()
+            cell_overall = metrics_by_subset[test_subset]["overall"]
+            cell_domain  = metrics_by_subset[test_subset]["domain"]
+
+            histogram_domain_metrics(cell_df, output_feature, cell_domain, cell_overall, ax)
+            predictions_scatterplot(output_feature, cell_df, ax)
+    
+    for index, train_dataset in enumerate(train_dataset_names):
+        
+        axes[0, index].set_title(f"Train: {train_dataset}", fontsize = 8)
+
+    for index, test_dataset in enumerate(test_dataset_names):
+        
+        axes[index, 0].set_ylabel(f"Test: {test_dataset}", fontsize = 8, rotation = 90, labelpad = 5)
+    
+    plt.tight_layout()
+    output_file = results_base_path / f"{output_feature}_benchmark_grid.png"
+    plt.savefig(output_file, dpi = 200)
+    plt.close()
+
+def old_plot_benchmark_grid(results_base_path, output_feature, minimum_valid_datapoints = 10):
     
     # Set up paths and train / test names
     results_base_path = Path(results_base_path)

@@ -17,18 +17,25 @@ from splits import handle_splits, remove_homologous_sequences_from_inference
 from models import handle_models
 from training import handle_training_models, load_trained_model
 from inference import handle_inference
-from metrics import handle_metrics
+from metrics import handle_metrics, compute_metrics_per_subset
 from visuals import plot_predictions_vs_true
 
 # Global variables
 AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
 
-def train_and_test(config):
+def train_and_test(config, results_path_override = None):
     
     device = get_device()
     n_workers = get_n_workers()
     paths_dict = {"base": setup_folders()}
-    paths_dict["results"] = get_results_path(paths_dict["base"])
+    
+    if results_path_override == None:
+        
+        paths_dict["results"] = get_results_path(paths_dict["base"])
+    
+    else:
+        
+        paths_dict["results"] = results_path_override
     
     print("Data")
     dataset_dicts = handle_data(
@@ -68,7 +75,7 @@ def train_and_test(config):
         )
     
     print("Splits")
-    dataloaders_dict = handle_splits(
+    dataloaders_dict, test_subset_to_sequence_dict = handle_splits(
         dataset_dicts,
         config["SUBSETS_SPLITS_DICT"],
         config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"],
@@ -119,12 +126,17 @@ def train_and_test(config):
         trained_model,
         criterion,
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
+        test_subset_to_sequence_dict,
         device,
         paths_dict["results"]
         )
     
     print("Metrics")
-    overall_metrics, domain_specific_metrics = handle_metrics(
+    #overall_metrics, domain_specific_metrics = handle_metrics(
+    #    config["PREDICTED_FEATURES_LIST"],
+    #    paths_dict["results"]
+    #    )
+    metrics_by_subset = compute_metrics_per_subset(
         config["PREDICTED_FEATURES_LIST"],
         paths_dict["results"]
         )

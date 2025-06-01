@@ -32,6 +32,9 @@ def handle_splits(
         datasets_splits_dict
         )
     
+    print("DESRIED SPLIT SIZES")
+    print(desired_split_sizes)
+    
     # Assign families globally
     family_to_split_assignment = assign_families_to_splits(
         dataset_dicts,
@@ -59,6 +62,16 @@ def handle_splits(
             f"({train_count/total*100:.1f}%)"
         )
     
+    for ds in dataset_dicts:
+        key = ds["unique_key"]
+        subset_total = len(ds["dataset"])
+        raw_test_count = len(datasets_split_indices[key]["TEST"])
+        print(
+            f"DEBUG STEP 1 – {key} RAW TEST: "
+            f"{raw_test_count}/{subset_total} "
+            f"({raw_test_count/subset_total*100:.1f}%)"
+        )
+    
     # Filter datasets
     split_datasets = construct_filtered_datasets(
         dataset_dicts,
@@ -67,6 +80,16 @@ def handle_splits(
         )
     
     # === DEBUG STEP 2: raw TEST allocation per subset ===
+    for ds in dataset_dicts:
+        key = ds["unique_key"]
+        total = len(ds["dataset"])
+        train_count = len(datasets_split_indices[key]["TRAIN"])
+        print(
+            f"DEBUG STEP 2 – {key} TRAIN: "
+            f"{train_count}/{total} "
+            f"({train_count/total*100:.1f}%)"
+        )
+    
     for ds in dataset_dicts:
         key = ds["unique_key"]
         subset_total = len(ds["dataset"])
@@ -86,15 +109,17 @@ def handle_splits(
     # Save splits
     save_training_sequences(results_path, datasets_split_indices, dataset_dicts)
 
+    test_subset_to_sequence_dict = create_subset_to_sequence_dict(split_datasets["TEST"])
+
     final_splits = {
-        split: ConcatDataset(split_datasets[split])
+        split: ConcatDataset(split_datasets[split].values())
         for split in ["TRAIN", "VALIDATION", "TEST"] if split != []
     }
     
     # Load into dataloaders
     dataloaders_dict = splits_to_loaders(final_splits, batch_size, n_workers)
     
-    return dataloaders_dict
+    return dataloaders_dict, test_subset_to_sequence_dict
 
 def read_homology_file(homology_file: str) -> dict:
     
@@ -155,7 +180,7 @@ def assign_families_to_splits(
     homology_family_dict, 
     desired_split_sizes,
     datasets_splits_dict
-):
+    ):
 
     """
     This function is now a lot more permissive, rather than trying to match splits exactly;
@@ -192,6 +217,15 @@ def assign_families_to_splits(
     all_family_ids = list(homology_family_dict.keys())
     np.random.shuffle(all_family_ids)
     
+    # Assign one family to each non-zero split
+    family_to_split_assignment, split_counts_per_subset = assign_at_least_one_family_to_required_splits(
+        family_subset_counts,
+        dataset_dicts,
+        desired_split_sizes,
+        family_to_split_assignment,
+        split_counts_per_subset
+        )
+    
     # Assign families using heuristics to find best way to fill up each split
     for family_id in all_family_ids:
         
@@ -213,31 +247,72 @@ def assign_families_to_splits(
     
     return family_to_split_assignment
 
+def assign_at_least_one_family_to_required_splits(
+    family_subset_counts: dict[str, dict[str, int]],
+    dataset_dicts: list[dict],
+    desired_split_sizes: dict[str, dict[str, int]],
+    family_to_split_assignment,
+    split_counts_per_subset
+    ):
+    
+    """
+    Randomly assigning families can lead to edge-cases where one dataset has its train-test assigned correctly,
+    but this causes another dataset to have no families available to assign to the splits it requires.
+    This function aims to assign at least one family to each subset-split,
+    before the others are assigned randomly, and throws an error if this is not possible.
+    """
+    
+    for dataset_dict in dataset_dicts:
+        
+        for split in ["TRAIN", "VALIDATION", "TEST"]:
+            
+            if desired_split_sizes[dataset_dict["unique_key"]][split] > 0 and split_counts_per_subset[dataset_dict["unique_key"]][split] == 0:
+                
+                eligible_families = [
+                    family for family, counts in family_subset_counts.items()
+                    if family not in family_to_split_assignment and counts[dataset_dict["unique_key"]] > 0
+                    ]
+
+                if not eligible_families:
+                    
+                    raise RuntimeError(f"No available family can fill at least one sequence for "f"{dataset_dict['unique_key']} {split}.")
+    
+                reserved_family = random.choice(eligible_families)
+                family_to_split_assignment[reserved_family] = split
+                
+                for subset in split_counts_per_subset:
+                    
+                    split_counts_per_subset[subset][split] += (family_subset_counts[reserved_family][subset])
+    
+    return family_to_split_assignment, split_counts_per_subset
+    
 def select_best_split(
     family_id: str,
     family_subset_counts: dict[str, dict[str, int]],
     split_counts_per_subset: dict[str, dict[str, int]],
     desired_split_sizes: dict[str, dict[str, int]],
     dataset_dicts: list[dict],
-    datasets_splits_dict: dict[str, dict]
+    datasets_splits_dict: dict[str, dict],
+    training_assign_bias = 20,
+    validation_assign_bias = 1,
+    testing_assign_bias = 1
 ) -> str:
     
     """
-    Trial assigning fmaily to each split including unassigned.
-    Measure deviation between desired counts for each subset's splits, and actual.
-    A positive deviation means assigning more sequences than the subset split wants,
-    negative deviation is how much it wants the sequence.
-    Pick split choice which minimises the overall deviation.
-    There are obvious edge-cases where this will lead to very weird splits,
-    but for now it is okay.
+    Each family can be assigned to training, validation, testing, or left unassigned.
+    For each of these possibilities we check how "hungry" each subset is for it to be assigned,
+    and also how much that particular family would satisify. The current metric simply mutiplies these variables,
+    and can be biased, incase you really want the a particular split to be full.
+    The split sizes are the goals, the biases are how prioritised each is, a larger number is a higher priority.
     """
     
     best_split = "UNASSIGNED"
     min_total_deviation = float("inf")
 
+    # Check each split, for each subset, to see what the deviation from the desired split is.
     for split in ["TRAIN", "VALIDATION", "TEST"]:
         
-        split_deviation = 0
+        split_metric = 0
         accept_split = False
         
         for dataset_dict in dataset_dicts:
@@ -246,16 +321,24 @@ def select_best_split(
             subset_sequences_in_split_count = split_counts_per_subset[dataset_dict["unique_key"]][split]
             projected_subset_sequence_in_split_count = subset_sequences_in_split_count + family_sequences_in_subset_count
             desired_subset_sequence_in_split_count = desired_split_sizes[dataset_dict["unique_key"]][split]
+            
+            # Our metric is a combination of "How hungry is this split?" and "How much will this family fill it up?"
             subset_deviation = projected_subset_sequence_in_split_count - desired_subset_sequence_in_split_count
+            family_contribution = family_sequences_in_subset_count * subset_deviation
         
-            if subset_deviation <= 0:
+            if split == "TRAIN": family_contribution *= training_assign_bias
+            if split == "VALIDATION": family_contribution *= validation_assign_bias
+            if split == "TEST": family_contribution *= testing_assign_bias
+        
+            # If the projected split once the family is added to it is 
+            if family_contribution < 0:
             
                 accept_split = True
-                split_deviation += subset_deviation
+                split_metric += family_contribution
         
-        if split_deviation < min_total_deviation and accept_split == True:
+        if split_metric < min_total_deviation and accept_split == True:
             
-            min_total_deviation = split_deviation
+            min_total_deviation = split_metric
             best_split = split
     
     return best_split
@@ -329,10 +412,11 @@ def construct_filtered_datasets(
     ):
     
     """
-        
+
     """
     
-    split_datasets = { "TRAIN": [], "VALIDATION": [], "TEST": [], "UNASSIGNED": [] }
+    split_datasets = { "TRAIN": {}, "VALIDATION": {}, "TEST": {}, "UNASSIGNED": {}}
+    #split_datasets = { "TRAIN": [], "VALIDATION": [], "TEST": [], "UNASSIGNED": []}
     
     for dataset_name, indices_dict in datasets_split_indices.items():
         
@@ -340,27 +424,28 @@ def construct_filtered_datasets(
             
             target_dataset_dict = [dataset_dict for dataset_dict in dataset_dicts if dataset_dict["unique_key"] == dataset_name][0]
             dataset_subset = target_dataset_dict["dataset"].filter_by_indices(indices_dict[split])
-            split_datasets[split].append(dataset_subset)
+            #split_datasets[split].append(dataset_subset)
+            split_datasets[split][dataset_name] = dataset_subset
             
     return split_datasets
 
 def remove_wt_from_split(split: list) -> list:
     
-    if split is not []:
+    if split is not {}:
         
-        filtered_split = []
+        filtered_split = {}
         
-        for dataset in split:
+        for dataset_name, dataset in split.items():
     
             keep_indices = [index for index, wt_flag in enumerate(dataset.wt_flags) if not wt_flag]
             filtered_dataset = dataset.filter_by_indices(keep_indices)
-            filtered_split.append(filtered_dataset)
+            filtered_split[dataset_name] = filtered_dataset
         
         return filtered_split
     
     else:
         
-        return []
+        return {}
 
 def save_training_sequences(
     save_directory: str,
@@ -395,6 +480,22 @@ def save_training_sequences(
         
         pickle.dump(list(training_keys), f)
 
+def create_subset_to_sequence_dict(split_subsets):
+    
+    subset_to_sequence_dict = {}
+    
+    for subset in split_subsets:
+        
+        #subset_name = subset["unique_key"]
+        #subset_sequences = subset["dataset"].aa_seqs
+        #subset_to_sequence_dict[subset_name] = subset_sequences
+        
+        for subset_name, dataset in split_subsets.items():
+            
+            subset_to_sequence_dict[subset_name] = dataset.aa_seqs
+    
+    return subset_to_sequence_dict
+
 def splits_to_loaders(
     splits: dict,
     batch_size: int,
@@ -428,7 +529,7 @@ def splits_to_loaders(
             shuffle = shuffle_flag,
             drop_last = drop_last_flag,
             num_workers = n_workers,
-            persistent_workers = False,
+            persistent_workers = True,
             collate_fn = collate_fn
         )
 

@@ -1,6 +1,7 @@
 # Third-party modules
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class FFNN(nn.Module):
 
@@ -105,6 +106,26 @@ def get_model(
     
     return model
 
+class ModePullLoss(nn.Module):
+    
+    def __init__(self, base_loss, lambda_reg = 0.1):
+        
+        super().__init__()
+        self.base = base_loss
+        self.lam = lambda_reg
+
+    def forward(self, preds, targets):
+        
+        # standard regression loss:
+        reg_loss = self.base(preds, targets)
+
+        # “pull‐to‐0 or –1” penalty:
+        dist_to_zero = preds.pow(2)
+        dist_to_neg1 = (preds + 1).pow(2)
+        pull_penalty = torch.min(dist_to_zero, dist_to_neg1).mean()
+
+        return reg_loss + self.lam * pull_penalty
+
 def get_loss_function(loss_function_choice):
     
     match loss_function_choice:
@@ -117,4 +138,8 @@ def get_loss_function(loss_function_choice):
             
             criterion = nn.L1Loss()
         
+        case "MODE-PULL":
+            
+            criterion = ModePullLoss(base_loss = nn.MSELoss(), lambda_reg = 0.1)
+          
     return criterion

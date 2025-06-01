@@ -14,6 +14,7 @@ def handle_inference(
     trained_model,
     criterion,
     batch_size: int,
+    test_subset_to_sequence_dict,
     device,
     results_path,
     ) -> tuple[pd.DataFrame, dict, dict]:
@@ -24,7 +25,7 @@ def handle_inference(
             
             test_loss, predictions_df = run_inference_on_ffnn(trained_model, dataloaders_dict["TEST"], criterion, device, output_features, results_path, batch_size)
     
-    save_results(predictions_df, results_path)
+    save_results(predictions_df, test_subset_to_sequence_dict, results_path)
     
     return predictions_df
 
@@ -112,7 +113,7 @@ def run_inference_on_ffnn(
 
     return average_test_loss, results_df
 
-def save_results(results_df, results_path):
+def save_results(results_df, test_subset_to_sequence_dict, results_path):
     
     pair = results_path.name
     # strip off the leading "trained_on_"
@@ -135,6 +136,18 @@ def save_results(results_df, results_path):
     with open((results_path / "results.csv"), "w") as results_file:
         
         results_file.writelines(header_lines)
+    
+    # Map results to subsets
+    subset_rows = []
+    
+    for subset_name, sequence_list in test_subset_to_sequence_dict.items():
+        
+        for sequence in sequence_list:
+            
+            subset_rows.append({"sequences": sequence, "subset": subset_name})
+            
+    subset_df = pd.DataFrame(subset_rows)
+    results_df = pd.merge(subset_df, results_df, on = "sequences", how = "left")
     
     # Data
     results_df.to_csv(results_path / "results.csv", mode = "a", index = False)

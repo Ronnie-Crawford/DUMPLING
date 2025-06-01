@@ -239,7 +239,7 @@ def fetch_embeddings(
     
     pooled_batch_embeddings = []
     full_embeddings = [None] * len(dataset)
-    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers, persistent_workers = False)
+    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers, persistent_workers = True)
 
     with torch.no_grad():
 
@@ -254,36 +254,36 @@ def fetch_embeddings(
                 
                 for sequence_index, seq in enumerate(batch["aa_seq"]):
                     
-                    sequence_embeddings = batch_embeddings[sequence_index, 1:len(seq) + 1, :].cpu()
+                    sequence_embeddings = batch_embeddings[sequence_index, 1:len(seq) + 1, :].to(device)
                     pooled_batch_embeddings.append(sequence_embeddings)
 
             elif embedding_type == "MEAN":
                 
-                pooled_batch_embeddings = batch_embeddings.mean(dim = 1).float().cpu()
+                pooled_batch_embeddings = batch_embeddings.mean(dim = 1).float().to(device)
 
             elif embedding_type == "MAX":
 
-                pooled_batch_embeddings = batch_embeddings.max(dim = 1).values.cpu()
+                pooled_batch_embeddings = batch_embeddings.max(dim = 1).values.to(device)
 
             elif embedding_type == "MIN":
 
-                pooled_batch_embeddings = batch_embeddings.min(dim = 1).values.cpu()
+                pooled_batch_embeddings = batch_embeddings.min(dim = 1).values.to(device)
 
             elif embedding_type == "STD":
 
-                pooled_batch_embeddings = batch_embeddings.std(dim = 1).float().cpu()
+                pooled_batch_embeddings = batch_embeddings.std(dim = 1).float().to(device)
 
             elif embedding_type == "PC1":
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 1, device).cpu()
+                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 1, device).to(device)
 
             elif embedding_type == "PC2":
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 2, device).cpu()
+                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 2, device).to(device)
 
             elif embedding_type == "PC3":
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 3, device).cpu()
+                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 3, device).to(device)
 
             else:
 
