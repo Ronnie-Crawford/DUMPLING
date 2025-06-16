@@ -41,10 +41,6 @@ def preflight_checks(config):
     assert isinstance(config["DATA"]["PREDICTED_FEATURES"]["APCA_FITNESS"], bool), "Config predicted feature: aPCA fitness option must be a bool."
     assert isinstance(config["DATA"]["PREDICTED_FEATURES"]["CDNAPD_ENERGY"], bool), "Config predicted feature: cDNA-PD energy option must be a bool."
     assert sum(config["DATA"]["PREDICTED_FEATURES"].values()) > 0, ""
-    assert isinstance(config["DATA"]["SPLITS_PRIORITY"]["PRESERVE_TRAINING"], bool), "Config split priority: preserve training option must be a bool."
-    assert isinstance(config["DATA"]["SPLITS_PRIORITY"]["PRESERVE_INFERENCE"], bool), "Config split priority: preserve inference option must be a bool."
-    assert isinstance(config["DATA"]["SPLITS_PRIORITY"]["COMPROMISE"], bool), "Config split priority: compromise option must be a bool."
-    assert sum(config["DATA"]["SPLITS_PRIORITY"].values()) == 1, "One and only one split priority method must be true."
     assert isinstance(config["DATA"]["FILTERS"]["FILTER_ONE_WILDTYPE_PER_DOMAIN"], bool), "Config filters: filter one wildtype per domain option must be a bool."
     assert isinstance(config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"], bool), "Config filters: exclude wildtype from inference option must be a bool."
     
@@ -73,6 +69,11 @@ def format_config(config):
         for dataset_name, labels in config["DATA"]["DATASET_GROUPS"].items()
         for label_name, include in labels.items() if include
         ]
+    config["SUBSETS_FOR_BENCHMARK_TRAINING"] = [
+        (dataset_name, label_name)
+        for dataset_name, labels in config["DATA"]["BENCHMARK_TRAINING_SUBSETS"].items()
+        for label_name, include in labels.items() if include
+        ]
     subsets_splits_dict = {}
     
     for dataset_name, label_name in config["SUBSETS_IN_USE"]:
@@ -95,6 +96,9 @@ def format_config(config):
             predicted_features.add(feature)
 
     config["PREDICTED_FEATURES_LIST"] = sorted(predicted_features)
+    split_priorities = [key for key, value in config["DATA"]["SPLITS_PRIORITY"].items() if value]
+    priority_split = split_priorities[0] if len(split_priorities) == 1 else None
+    config["PRIORITY_SPLIT"] = priority_split
     config["UPSTREAM_MODELS_LIST"] = [key for key, value in config["UPSTREAM_MODELS"]["MODELS"].items() if value]
     config["EMBEDDING_POOL_TYPE_LIST"] = [key for key, value in config["UPSTREAM_MODELS"]["EMBEDDING_POOL_TYPES"].items() if value]
     config["DIMENSIONAL_REDUCTION_CHOICE"] = [key for key, value in config["UPSTREAM_MODELS"]["POSTPROCESSING"]["DIMENSIONAL_REDUCTION"].items() if value][0]

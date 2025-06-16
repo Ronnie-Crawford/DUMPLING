@@ -254,36 +254,36 @@ def fetch_embeddings(
                 
                 for sequence_index, seq in enumerate(batch["aa_seq"]):
                     
-                    sequence_embeddings = batch_embeddings[sequence_index, 1:len(seq) + 1, :].to(device)
+                    sequence_embeddings = batch_embeddings[sequence_index, 1:len(seq) + 1, :].detach().cpu()
                     pooled_batch_embeddings.append(sequence_embeddings)
 
             elif embedding_type == "MEAN":
                 
-                pooled_batch_embeddings = batch_embeddings.mean(dim = 1).float().to(device)
+                pooled_batch_embeddings = batch_embeddings.mean(dim = 1).float().detach().cpu()
 
             elif embedding_type == "MAX":
 
-                pooled_batch_embeddings = batch_embeddings.max(dim = 1).values.to(device)
+                pooled_batch_embeddings = batch_embeddings.max(dim = 1).values.detach().cpu()
 
             elif embedding_type == "MIN":
 
-                pooled_batch_embeddings = batch_embeddings.min(dim = 1).values.to(device)
+                pooled_batch_embeddings = batch_embeddings.min(dim = 1).values.detach().cpu()
 
             elif embedding_type == "STD":
 
-                pooled_batch_embeddings = batch_embeddings.std(dim = 1).float().to(device)
+                pooled_batch_embeddings = batch_embeddings.std(dim = 1).float().detach().cpu()
 
             elif embedding_type == "PC1":
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 1, device).to(device)
+                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 1, device).detach().cpu()
 
             elif embedding_type == "PC2":
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 2, device).to(device)
+                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 2, device).detach().cpu()
 
             elif embedding_type == "PC3":
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 3, device).to(device)
+                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 3, device).detach().cpu()
 
             else:
 
@@ -293,8 +293,14 @@ def fetch_embeddings(
 
                 full_embeddings[batch_index * batch_size + index] = pooled_batch_embeddings[index]
 
-    del dataloader
-    gc.collect()
+            # A desperate attempt to claw back any RAM
+            if batch_index % 10 == 0:
+                
+                del batch_embeddings, pooled_batch_embeddings
+                torch.cuda.empty_cache()
+                torch.mps.empty_cache()
+
+            print(f"Fetched embedding {batch_index} out of {len(dataloader)}")
 
     return full_embeddings
 

@@ -7,12 +7,17 @@ import random
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 
 def handle_splits(
     dataset_dicts,
     datasets_splits_dict: dict,
     exclude_wildtype_from_inference: bool,
+    upsample_subsets_for_training: bool,
+    priority_split: str,
+    training_assign_bias: int,
+    validation_assign_bias: int,
+    testing_assign_bias: int,
     batch_size: int,
     n_workers: int,
     homology_path,
@@ -40,7 +45,11 @@ def handle_splits(
         dataset_dicts,
         homology_family_dict,
         desired_split_sizes,
-        datasets_splits_dict
+        datasets_splits_dict,
+        priority_split,
+        training_assign_bias,
+        validation_assign_bias,
+        testing_assign_bias,
     )
     
     # Get indices per dataset and per split based on assignment
@@ -51,27 +60,6 @@ def handle_splits(
         datasets_splits_dict
     )
     
-    # === DEBUG STEP 1: training allocation per subset ===
-    for ds in dataset_dicts:
-        key = ds["unique_key"]
-        total = len(ds["dataset"])
-        train_count = len(datasets_split_indices[key]["TRAIN"])
-        print(
-            f"DEBUG STEP 1 – {key} TRAIN: "
-            f"{train_count}/{total} "
-            f"({train_count/total*100:.1f}%)"
-        )
-    
-    for ds in dataset_dicts:
-        key = ds["unique_key"]
-        subset_total = len(ds["dataset"])
-        raw_test_count = len(datasets_split_indices[key]["TEST"])
-        print(
-            f"DEBUG STEP 1 – {key} RAW TEST: "
-            f"{raw_test_count}/{subset_total} "
-            f"({raw_test_count/subset_total*100:.1f}%)"
-        )
-    
     # Filter datasets
     split_datasets = construct_filtered_datasets(
         dataset_dicts,
@@ -79,26 +67,7 @@ def handle_splits(
         datasets_splits_dict
         )
     
-    # === DEBUG STEP 2: raw TEST allocation per subset ===
-    for ds in dataset_dicts:
-        key = ds["unique_key"]
-        total = len(ds["dataset"])
-        train_count = len(datasets_split_indices[key]["TRAIN"])
-        print(
-            f"DEBUG STEP 2 – {key} TRAIN: "
-            f"{train_count}/{total} "
-            f"({train_count/total*100:.1f}%)"
-        )
-    
-    for ds in dataset_dicts:
-        key = ds["unique_key"]
-        subset_total = len(ds["dataset"])
-        raw_test_count = len(datasets_split_indices[key]["TEST"])
-        print(
-            f"DEBUG STEP 2 – {key} RAW TEST: "
-            f"{raw_test_count}/{subset_total} "
-            f"({raw_test_count/subset_total*100:.1f}%)"
-        )
+    print_datasets(dataset_dicts, datasets_split_indices)
     
     # Remove wildtype sequences from inference splits
     if exclude_wildtype_from_inference:
@@ -108,7 +77,6 @@ def handle_splits(
     
     # Save splits
     save_training_sequences(results_path, datasets_split_indices, dataset_dicts)
-
     test_subset_to_sequence_dict = create_subset_to_sequence_dict(split_datasets["TEST"])
 
     final_splits = {
@@ -116,8 +84,15 @@ def handle_splits(
         for split in ["TRAIN", "VALIDATION", "TEST"] if split != []
     }
     
+    # Use a sampler if desired
+    train_sampler = None
+    
+    if upsample_subsets_for_training == True:
+        
+        train_sampler = apply_upsampling_to_train_split(split_datasets)
+    
     # Load into dataloaders
-    dataloaders_dict = splits_to_loaders(final_splits, batch_size, n_workers)
+    dataloaders_dict = splits_to_loaders(final_splits, batch_size, n_workers, train_sampler)
     
     return dataloaders_dict, test_subset_to_sequence_dict
 
@@ -161,9 +136,9 @@ def calculate_desired_split_sizes(dataset_dicts, datasets_splits_dict):
         
         total_sequences = len(dataset_dict["dataset"])
         splits = datasets_splits_dict[dataset_dict["unique_key"]]
-        train_count = int(total_sequences * splits.get("TRAIN", 0))
-        validation_count = int(total_sequences * splits.get("VALIDATION", 0))
-        test_count = int(total_sequences * splits.get("TEST", 0))
+        train_count = int(round(total_sequences * splits.get("TRAIN", 0)))
+        validation_count = int(round(total_sequences * splits.get("VALIDATION", 0)))
+        test_count = int(round(total_sequences * splits.get("TEST", 0)))
         unassigned_count = total_sequences - (train_count + validation_count + test_count)
 
         desired_split_sizes[dataset_dict["unique_key"]] = {
@@ -179,7 +154,11 @@ def assign_families_to_splits(
     dataset_dicts, 
     homology_family_dict, 
     desired_split_sizes,
-    datasets_splits_dict
+    datasets_splits_dict,
+    priority_split,
+    training_assign_bias,
+    validation_assign_bias,
+    testing_assign_bias
     ):
 
     """
@@ -213,6 +192,18 @@ def assign_families_to_splits(
             
         family_subset_counts[family_id] = counts
 
+    # If there is a priority split
+    if priority_split != None:
+        
+        assign_families_to_priority_split(
+            priority_split,
+            family_subset_counts,
+            dataset_dicts,
+            datasets_splits_dict,
+            family_to_split_assignment,
+            split_counts_per_subset
+            )
+
     # Shuffle the family IDs
     all_family_ids = list(homology_family_dict.keys())
     np.random.shuffle(all_family_ids)
@@ -239,13 +230,43 @@ def assign_families_to_splits(
             split_counts_per_subset,
             desired_split_sizes,
             dataset_dicts,
-            datasets_splits_dict
+            datasets_splits_dict,
+            training_assign_bias,
+            validation_assign_bias,
+            testing_assign_bias
         )
 
         family_to_split_assignment[family_id] = best_split
         split_counts_per_subset = update_split_counts(family_id, family_subset_counts, split_counts_per_subset, best_split)
     
     return family_to_split_assignment
+
+def assign_families_to_priority_split(
+    priority_split: str,
+    family_subset_counts: dict,
+    dataset_dicts: list,
+    datasets_splits_dict: dict,
+    family_to_split_assignment: dict,
+    split_counts_per_subset: dict
+    ):
+    
+    for family_id, counts in family_subset_counts.items():
+        
+        for dataset_dict in dataset_dicts:
+            
+            subset_key = dataset_dict["unique_key"]
+            
+            if datasets_splits_dict[subset_key].get(priority_split, 0) > 0 and counts[subset_key] > 0:
+                
+                # assign this entire family to TEST
+                family_to_split_assignment[family_id] = priority_split
+                
+                # update split_counts_per_subset for ALL subsets
+                for sub in split_counts_per_subset:
+                    
+                    split_counts_per_subset[sub][priority_split] += counts[sub]
+                    
+                break
 
 def assign_at_least_one_family_to_required_splits(
     family_subset_counts: dict[str, dict[str, int]],
@@ -293,7 +314,7 @@ def select_best_split(
     desired_split_sizes: dict[str, dict[str, int]],
     dataset_dicts: list[dict],
     datasets_splits_dict: dict[str, dict],
-    training_assign_bias = 20,
+    training_assign_bias = 1,
     validation_assign_bias = 1,
     testing_assign_bias = 1
 ) -> str:
@@ -401,7 +422,6 @@ def get_datasets_split_indices(
                 
                 kept_sequences = random.sample(current_sequences, desired_sequences_count)
                 datasets_split_indices[subset_name][split] = kept_sequences
-                #datasets_split_indices[subset]["UNASSIGNED"].extend(dropped)
 
     return datasets_split_indices
 
@@ -411,12 +431,7 @@ def construct_filtered_datasets(
     datasets_splits_dict: dict
     ):
     
-    """
-
-    """
-    
     split_datasets = { "TRAIN": {}, "VALIDATION": {}, "TEST": {}, "UNASSIGNED": {}}
-    #split_datasets = { "TRAIN": [], "VALIDATION": [], "TEST": [], "UNASSIGNED": []}
     
     for dataset_name, indices_dict in datasets_split_indices.items():
         
@@ -424,12 +439,25 @@ def construct_filtered_datasets(
             
             target_dataset_dict = [dataset_dict for dataset_dict in dataset_dicts if dataset_dict["unique_key"] == dataset_name][0]
             dataset_subset = target_dataset_dict["dataset"].filter_by_indices(indices_dict[split])
-            #split_datasets[split].append(dataset_subset)
             split_datasets[split][dataset_name] = dataset_subset
             
     return split_datasets
 
-def remove_wt_from_split(split: list) -> list:
+def print_datasets(dataset_dicts, datasets_split_indices):
+    
+    print("\n---------- Dataset-Split Assignments ----------")
+    
+    for dataset_dict in dataset_dicts:
+        
+        total_length = len(dataset_dict["dataset"])
+        train_count = len(datasets_split_indices[dataset_dict["unique_key"]]["TRAIN"])
+        validation_count = len(datasets_split_indices[dataset_dict["unique_key"]]["VALIDATION"])
+        test_count = len(datasets_split_indices[dataset_dict["unique_key"]]["TEST"])
+        print(f"[{dataset_dict['unique_key']}] [Train: {train_count}/{total_length} {100 * train_count / total_length:.1f}% / Validation: {validation_count}/{total_length} {100 * validation_count / total_length:.1f}%/ Test: {test_count}/{total_length} {100 * test_count / total_length:.1f}%] ")
+
+    print("-----------------------------------------------")
+
+def remove_wt_from_split(split: dict) -> list:
     
     if split is not {}:
         
@@ -483,23 +511,57 @@ def save_training_sequences(
 def create_subset_to_sequence_dict(split_subsets):
     
     subset_to_sequence_dict = {}
-    
-    for subset in split_subsets:
         
-        #subset_name = subset["unique_key"]
-        #subset_sequences = subset["dataset"].aa_seqs
-        #subset_to_sequence_dict[subset_name] = subset_sequences
+    for subset_name, dataset in split_subsets.items():
         
-        for subset_name, dataset in split_subsets.items():
-            
-            subset_to_sequence_dict[subset_name] = dataset.aa_seqs
+        subset_to_sequence_dict[subset_name] = dataset.aa_seqs
     
     return subset_to_sequence_dict
+
+def apply_upsampling_to_train_split(split_datasets):
+    
+    """
+    Each subset can be vastly difference sizes compared to each other, so the aim is to use
+    PyTorch's WeightedRandomSampler class to upsample the smaller subsets.
+    """
+    
+    # Get lengths and inverse lengths
+    subset_names = list(split_datasets["TRAIN"].keys())
+    subset_lengths = {name: len(split_datasets["TRAIN"][name]) for name in subset_names}
+    
+    # This part feels very hacky
+    weights = []
+    
+    for name in subset_names:
+        
+        length = subset_lengths[name]
+        
+        if length == 0:
+            
+            # skip this subset entirely (no examples to weight)
+            continue
+
+        inverse = 1.0 / length
+        # Repeat inv exactly 'length' times (one weight per example in that subset)
+        weights.extend([inverse] * length)
+
+    sample_weights = torch.DoubleTensor(weights)
+    num_samples = sample_weights.numel()
+    
+    # Create WeightedRandomSampler
+    train_sampler = WeightedRandomSampler(
+        weights = sample_weights,
+        num_samples = num_samples,
+        replacement = True
+        )
+    
+    return train_sampler
 
 def splits_to_loaders(
     splits: dict,
     batch_size: int,
-    n_workers: int
+    n_workers: int,
+    train_sampler
 ) -> dict:
     
     """
@@ -522,16 +584,30 @@ def splits_to_loaders(
             
             # only drop the last batch if it's size 1
             drop_last_flag = (len(dataset) % batch_size == 1)
-
-        loaders[split_name] = DataLoader(
+            
+        if split_name == "TRAIN" and train_sampler != None:
+            
+            loaders[split_name] = DataLoader(
             dataset,
             batch_size = batch_size,
-            shuffle = shuffle_flag,
+            sampler = train_sampler,
             drop_last = drop_last_flag,
             num_workers = n_workers,
             persistent_workers = True,
             collate_fn = collate_fn
-        )
+            )
+
+        else:
+
+            loaders[split_name] = DataLoader(
+                dataset,
+                batch_size = batch_size,
+                shuffle = shuffle_flag,
+                drop_last = drop_last_flag,
+                num_workers = n_workers,
+                persistent_workers = True,
+                collate_fn = collate_fn
+            )
 
     return loaders
 
@@ -655,3 +731,53 @@ def read_sequence_to_family(homology_tsv_path):
         sequence_to_family_dict[row["sequence"]] = row["sequence_family"]
         
     return sequence_to_family_dict
+
+def use_thermompnn_splits(
+    dataset_dicts: list,
+    exclude_wildtype_from_inference: bool,
+    batch_size: int,
+    n_workers: int,
+    ):
+    
+    # Read in thermompnn splits
+    thermompnn_splits = pd.read_pickle("/Users/rc30/Documents/projects/ids_project/custom_model/splits/mega_splits.pkl")
+    thermompnn_train_split_domains = [domain.removesuffix('.pdb') for domain in thermompnn_splits["train"]]
+    thermompnn_test_split_domains = [domain.removesuffix('.pdb') for domain in thermompnn_splits["test"]]
+    
+    train_datasets = {}
+    test_datasets  = {}
+    
+    # Iterate through each dataset, though only megascale datasets will return anything
+    for dataset_dict in dataset_dicts:
+        
+        dataset_name = dataset_dict["unique_key"]
+        dataset = dataset_dict["dataset"]
+        train_idx = [index for index, domain in enumerate(dataset.domain_names) if domain in thermompnn_train_split_domains]
+        test_idx  = [index for index, domain in enumerate(dataset.domain_names) if domain in thermompnn_test_split_domains]
+            
+        train_dataset = dataset.filter_by_indices(train_idx)
+        test_dataset  = dataset.filter_by_indices(test_idx)
+
+        train_datasets[dataset_name] = train_dataset
+        test_datasets[dataset_name] = test_dataset
+    
+    if exclude_wildtype_from_inference:
+
+        test_datasets = remove_wt_from_split(test_datasets)
+     
+    final_train = ConcatDataset(list(train_datasets.values()))
+    final_test  = ConcatDataset(list(test_datasets.values()))
+    
+    loaders = splits_to_loaders(
+        splits = {"TRAIN": final_train, "TEST": final_test},
+        batch_size = batch_size,
+        n_workers = n_workers,
+        train_sampler = None
+    )
+    
+    test_subset_to_sequence_dict = {
+      subset_name: ds.aa_seqs
+      for subset_name, ds in test_datasets.items()
+    }
+    
+    return loaders, test_subset_to_sequence_dict

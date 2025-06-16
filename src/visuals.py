@@ -17,13 +17,27 @@ def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list
         truth_column = f"{output_feature}_truth"
         predicted_column = f"{output_feature}_predictions"
         
-        true_values = predictions_df[truth_column]
-        predicted_values = predictions_df[predicted_column]
+        true_values = predictions_df[truth_column].to_numpy()
+        predicted_values = predictions_df[predicted_column].to_numpy()
+        keep_mask = np.isfinite(true_values) & np.isfinite(predicted_values)
+        true_values = true_values[keep_mask]
+        predicted_values = predicted_values[keep_mask]
         
-        plt.scatter(true_values, predicted_values, color = "blue", label = "Predicted vs True", s = 0.1, alpha = 0.8)
+        plt.scatter(true_values, predicted_values, color = "red", label = "Predicted vs True", s = 0.1, alpha = np.clip((1000 / len(true_values)), 0, 1)
         min_val = min(true_values.min(), predicted_values.min())
         max_val = max(true_values.max(), predicted_values.max())
         plt.plot([min_val, max_val], [min_val, max_val], "r--")
+        
+        # Checks if there is variance for contours
+        if not np.allclose(predicted_values, predicted_values[0]):
+            
+            if len(true_values) > 5000:
+            
+                idx = np.random.choice(len(true_values), 5000, replace = False)
+                true_values, predicted_values = true_values[idx], predicted_values[idx]
+
+            density = gaussian_kde(np.vstack([true_values, predicted_values]))(np.vstack([true_values, predicted_values]))
+            plt.tricontour(true_values, predicted_values, density, colors = "blue", alpha = 0.5)
         
         plt.xlabel(f"True {output_feature.capitalize()}")
         plt.ylabel(f"Predicted {output_feature.capitalize()}")

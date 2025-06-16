@@ -13,7 +13,7 @@ import torch
 from datasets import handle_data, handle_filtering, add_spoof_train_dataset
 from embedding import handle_embeddings
 from homology import handle_homology
-from splits import handle_splits, remove_homologous_sequences_from_inference
+from splits import handle_splits, remove_homologous_sequences_from_inference, use_thermompnn_splits
 from models import handle_models
 from training import handle_training_models, load_trained_model
 from inference import handle_inference
@@ -79,11 +79,23 @@ def train_and_test(config, results_path_override = None):
         dataset_dicts,
         config["SUBSETS_SPLITS_DICT"],
         config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"],
+        config["DATA"]["FILTERS"]["UPSAMPLE_TRAINING_SUBSETS"],
+        config["PRIORITY_SPLIT"],
+        config["DATA"]["SPLITS_BIASES"]["TRAIN_BIAS"],
+        config["DATA"]["SPLITS_BIASES"]["VALIDATION_BIAS"],
+        config["DATA"]["SPLITS_BIASES"]["TEST_BIAS"],
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         n_workers,
         paths_dict["homology"],
         paths_dict["results"]
         )
+    
+    #dataloaders_dict, test_subset_to_sequence_dict = use_thermompnn_splits(
+    #    dataset_dicts,
+    #    config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"],
+    #    config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
+    #    n_workers
+    #    )
     
     print("Models")
     model, criterion, optimiser = handle_models(

@@ -292,7 +292,7 @@ def set_feature_values_and_masks(row, predicted_feature_columns):
     keep_row = False    # keep_row checks if the row has valid value for at least one feature
     values = {}
     masks = {}
-    
+
     for feature, column in predicted_feature_columns.items():
         
         row_feature_value = row.get(column, "")

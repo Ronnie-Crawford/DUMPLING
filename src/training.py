@@ -210,7 +210,8 @@ def train_ffnn_from_embeddings(
 
         model.load_state_dict(best_model)
 
-    del dataloaders["TRAIN"], dataloaders["VALIDATION"]
+    if "VALIDATION" in dataloaders: del dataloaders["VALIDATION"]
+    if "TRAINING" in dataloaders: del dataloaders["TRAIN"]
     gc.collect()
 
     return model

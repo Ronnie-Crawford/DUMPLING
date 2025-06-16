@@ -83,7 +83,8 @@ def run_inference_on_ffnn(
                 cpu_truths = truths.cpu().numpy()
                 cpu_masks = masks.cpu().numpy()
 
-                predictions_dict[feature].append(np.where(cpu_masks, cpu_preds, np.nan))
+                #predictions_dict[feature].append(np.where(cpu_masks, cpu_preds, np.nan))
+                predictions_dict[feature].append(cpu_preds)
                 truths_dict[feature].append(np.where(cpu_masks, cpu_truths, np.nan))
 
             total_loss += sum(batch_losses)
@@ -146,8 +147,8 @@ def save_results(results_df, test_subset_to_sequence_dict, results_path):
             
             subset_rows.append({"sequences": sequence, "subset": subset_name})
             
-    subset_df = pd.DataFrame(subset_rows)
-    results_df = pd.merge(subset_df, results_df, on = "sequences", how = "left")
+    subset_df = pd.DataFrame(subset_rows).drop_duplicates(subset = ["sequences", "subset"])
+    results_df = pd.merge(results_df, subset_df, on = "sequences", how = "left")
     
     # Data
     results_df.to_csv(results_path / "results.csv", mode = "a", index = False)

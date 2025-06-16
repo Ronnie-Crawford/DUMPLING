@@ -139,8 +139,7 @@ def compute_domain_specific_metrics(results_df, output_features: list, min_count
     metrics = {}
     
     for output_feature in output_features:
-        
-        title = f"{output_feature.capitalize()} Prediction Metrics"
+
         domain_column = "domain"
         predicted_column = f"{output_feature}_predictions"
         truth_column = f"{output_feature}_truth"
@@ -158,12 +157,12 @@ def compute_domain_specific_metrics(results_df, output_features: list, min_count
             print(f"Not enough valid data points for {output_feature}. Required: {min_count}, Found: {valid_count}")
             
             metrics[output_feature] = {
-                'MSE': None,
-                'RMSE': None,
-                'R²': None,
-                'Spearman': None,
-                'Pearson': None
-            }
+                "MSE": None,
+                "RMSE": None,
+                "R²": None,
+                "Spearman": None,
+                "Pearson": None
+                }
             
             continue
             
@@ -176,57 +175,61 @@ def compute_domain_specific_metrics(results_df, output_features: list, min_count
         
         for domain in set(domains_list):
             
-            if len(filtered_df[filtered_df[domain_column] == domain]) > min_count:
+            if len(filtered_df[filtered_df[domain_column] == domain]) < min_count:
                 
-                predicted_values_np = filtered_df[filtered_df[domain_column] == domain][predicted_column].astype(float).values
-                true_values_np = filtered_df[filtered_df[domain_column] == domain][truth_column].astype(float).values
-            
-                mse = ((predicted_values_np - true_values_np) ** 2).mean()
-                rmse = math.sqrt(mse)
-                ss_res = ((true_values_np - predicted_values_np) ** 2).sum()
-                ss_tot = ((true_values_np - true_values_np.mean()) ** 2).sum()
-                r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else float('nan')
+                continue
                 
-                try:
+            predicted_values_np = filtered_df[filtered_df[domain_column] == domain][predicted_column].astype(float).values
+            true_values_np = filtered_df[filtered_df[domain_column] == domain][truth_column].astype(float).values
+        
+            mse = ((predicted_values_np - true_values_np) ** 2).mean()
+            rmse = math.sqrt(mse)
+            ss_res = ((true_values_np - predicted_values_np) ** 2).sum()
+            ss_tot = ((true_values_np - true_values_np.mean()) ** 2).sum()
+            r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else float('nan')
             
-                    pearson_corr, _ = pearsonr(predicted_values_np, true_values_np)
-            
-                except Exception as e:
-                    
-                    pearson_corr = float('nan')
-                    print(f"Pearson correlation calculation failed: {e}")
+            try:
+        
+                pearson_corr, _ = pearsonr(predicted_values_np, true_values_np)
+        
+            except Exception as e:
+                
+                pearson_corr = float('nan')
+                print(f"Pearson correlation calculation failed: {e}")
 
-                try:
-                    
-                    spearman_corr, _ = spearmanr(predicted_values_np, true_values_np)
-                    
-                except Exception as e:
-                    
-                    spearman_corr = float('nan')
-                    print(f"Spearman correlation calculation failed: {e}")
+            try:
                 
-                all_domains_mse[domain] = mse
-                all_domains_rmse[domain] = rmse
-                all_domains_r2[domain] = r2
-                all_domains_spearmans_rank[domain] = spearman_corr
-                all_domains_pearsons_rank[domain] = pearson_corr
+                spearman_corr, _ = spearmanr(predicted_values_np, true_values_np)
                 
-                metrics[output_feature] = {
+            except Exception as e:
+                
+                spearman_corr = float('nan')
+                print(f"Spearman correlation calculation failed: {e}")
+            
+            all_domains_mse[domain] = mse
+            all_domains_rmse[domain] = rmse
+            all_domains_r2[domain] = r2
+            all_domains_spearmans_rank[domain] = spearman_corr
+            all_domains_pearsons_rank[domain] = pearson_corr
+            
+        if len(all_domains_pearsons_rank) == 0:
+        
+            metrics[output_feature] = {
+                "MSE": {},
+                "RMSE": {},
+                "R²": {},
+                "Spearman": {},
+                "Pearson": {}
+                }
+        
+        else:
+        
+            metrics[output_feature] = {
                 "MSE": all_domains_mse,
                 "RMSE": all_domains_rmse,
                 "R²": all_domains_r2,
                 "Spearman": all_domains_spearmans_rank,
                 "Pearson": all_domains_pearsons_rank
-            }
-        
-            else:
-                
-                metrics[output_feature] = {
-                    'MSE': None,
-                    'RMSE': None,
-                    'R²': None,
-                    'Spearman': None,
-                    'Pearson': None
                 }
         
     return metrics

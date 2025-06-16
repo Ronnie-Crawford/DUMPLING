@@ -14,6 +14,14 @@
                 "DELETION": false
             }
         },
+        "BENCHMARK_TRAINING_SUBSETS": {
+            "DATASET_A": {
+                "ALL": true
+            },
+            "DATASET_B": {
+                "ALL": true
+            }
+        },
         "DATASETS": {
             "DATASET_A": {
                 "PATH": "data/dataset_a.csv",

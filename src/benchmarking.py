@@ -12,12 +12,9 @@ def all_against_all_benchmarking(config: dict) -> Path:
     base_results_folder = setup_folders()
     benchmarking_directory = create_benchmarking_directory(base_results_folder)
     
-    #for train_dataset_name, train_label_name in config["SUBSETS_IN_USE"]:
-    #for train_dataset_name, train_label_name in [("APCA_WITHOUT_NEW_DATA", "ALL"), ("CDNA-DP", "ALL")]:
-    for train_dataset_name, train_label_name in [("APCA_WITHOUT_NEW_DATA", "ALL")]:
+    for train_dataset_name, train_label_name in config["SUBSETS_FOR_BENCHMARK_TRAINING"]:
         
         training_key = f"{train_dataset_name}-{train_label_name}"
-        # Copy and modify training config
         run_config = copy.deepcopy(config)
         new_splits = {}
         
