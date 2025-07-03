@@ -44,6 +44,10 @@ def preflight_checks(config):
     assert isinstance(config["DATA"]["FILTERS"]["FILTER_ONE_WILDTYPE_PER_DOMAIN"], bool), "Config filters: filter one wildtype per domain option must be a bool."
     assert isinstance(config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"], bool), "Config filters: exclude wildtype from inference option must be a bool."
     
+    # Splits
+    assert (config["DATA"]["SPLITS_FILE"]["SAVE_SPLITS"] + config["DATA"]["SPLITS_FILE"]["LOAD_SPLITS"]) <= 1
+    assert os.path.exists(config["DATA"]["SPLITS_FILE"]["PATH"]) or config["DATA"]["SPLITS_FILE"]["LOAD_SPLITS"] == False
+    
     # Upstream models
     assert all(isinstance(model, bool) for model in config["UPSTREAM_MODELS"]["MODELS"].values()), ""
     assert sum(config["UPSTREAM_MODELS"]["MODELS"].values()) > 0, "At least one model in upstream models must be true."

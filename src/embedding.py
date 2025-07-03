@@ -152,9 +152,16 @@ def load_embeddings(
 
 def compute_dataset_hash(dataset):
     
-    sequence_str = ''.join(dataset.aa_seqs)
+    # Hashing everything at once was causing slow down,
+    # so instead we incrementally hash each sequence in turn
     
-    return hashlib.md5(sequence_str.encode("utf-8")).hexdigest()
+    md5 = hashlib.md5()
+    
+    for sequence in dataset.aa_seqs:
+        
+        md5.update(sequence.encode("utf-8"))
+        
+    return md5.hexdigest()
 
 def setup_model(model_selection: str, device: str):
     
@@ -300,7 +307,7 @@ def fetch_embeddings(
                 torch.cuda.empty_cache()
                 torch.mps.empty_cache()
 
-            print(f"Fetched embedding {batch_index} out of {len(dataloader)}")
+            print(f"Fetched embedding {batch_index + 1} out of {len(dataloader)}")
 
     return full_embeddings
 

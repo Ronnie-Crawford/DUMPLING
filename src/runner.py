@@ -13,7 +13,7 @@ import torch
 from datasets import handle_data, handle_filtering, add_spoof_train_dataset
 from embedding import handle_embeddings
 from homology import handle_homology
-from splits import handle_splits, remove_homologous_sequences_from_inference, use_thermompnn_splits
+from splits import handle_splits, remove_homologous_sequences_from_inference, load_domain_splits_from_file
 from models import handle_models
 from training import handle_training_models, load_trained_model
 from inference import handle_inference
@@ -22,6 +22,7 @@ from visuals import plot_predictions_vs_true
 
 # Global variables
 AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+MAX_FILENAME_LENGTH = 255
 
 def train_and_test(config, results_path_override = None):
     
@@ -37,6 +38,8 @@ def train_and_test(config, results_path_override = None):
         
         paths_dict["results"] = results_path_override
     
+    paths_dict["splits"] = config["DATA"]["SPLITS_FILE"]["PATH"]
+    
     print("Data")
     dataset_dicts = handle_data(
         paths_dict["base"],
@@ -44,6 +47,7 @@ def train_and_test(config, results_path_override = None):
         config["DATA"]["DATASETS"],
         config["DATA"]["FILTERS"]["FILTER_ONE_WILDTYPE_PER_DOMAIN"],
         config["PREDICTED_FEATURES_LIST"],
+        config["DATA"]["FEATURE_REMAPPING"],
         AMINO_ACIDS
         )
     
@@ -70,8 +74,7 @@ def train_and_test(config, results_path_override = None):
     print("Homology")        
     paths_dict["homology"] = handle_homology(
         dataset_dicts,
-        paths_dict["base"],
-        force_regeneration = True
+        paths_dict["base"]
         )
     
     print("Splits")
@@ -87,15 +90,10 @@ def train_and_test(config, results_path_override = None):
         config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
         n_workers,
         paths_dict["homology"],
-        paths_dict["results"]
+        paths_dict["splits"],
+        config["DATA"]["SPLITS_FILE"]["SAVE_SPLITS"],
+        config["DATA"]["SPLITS_FILE"]["LOAD_SPLITS"]
         )
-    
-    #dataloaders_dict, test_subset_to_sequence_dict = use_thermompnn_splits(
-    #    dataset_dicts,
-    #    config["DATA"]["FILTERS"]["EXCLUDE_WILDTYPE_INFERENCE"],
-    #    config["DOWNSTREAM_MODELS"]["TRAINING_PARAMETERS"]["BATCH_SIZE"],
-    #    n_workers
-    #    )
     
     print("Models")
     model, criterion, optimiser = handle_models(
@@ -441,4 +439,25 @@ def get_results_path(package_folder):
     results_path.mkdir(parents = True, exist_ok = True)
     shutil.copy((package_folder / "config.json"), (results_path / "config.json"))
     
-    return results_path
+    return Path(safe_filename(results_path))
+
+def safe_filename(path):
+    
+    dirpath, name = os.path.split(path)
+    stem, ext = os.path.splitext(name)
+
+    if len(name) <= MAX_FILENAME_LENGTH:
+        
+        return path
+
+    # Remove vowels from the stem first
+    vowels = set("aeiouAEIOU")
+    no_vowel = "".join(ch for ch in stem if ch not in vowels)
+
+    # If still too long, truncate
+    truncated = no_vowel[: MAX_FILENAME_LENGTH - len(ext)]
+
+    safe_name = truncated + ext
+    safe_name = os.path.join(dirpath, safe_name)
+    
+    return safe_name

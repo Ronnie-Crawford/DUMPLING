@@ -21,53 +21,60 @@ def handle_splits(
     batch_size: int,
     n_workers: int,
     homology_path,
-    results_path
+    splits_path,
+    save_splits: bool,
+    load_splits: bool
     ):
     
-    # Read homology families
-    homology_family_file_path = homology_path / "sequence_families.tsv"
-    homology_family_dict = read_homology_file(homology_family_file_path)
+    if load_splits == True:
+        
+        split_datasets = load_sequence_splits_from_file(splits_path, dataset_dicts)
     
-    # Prepare global split tracking - Family ID: Train/Validation/Test
-    family_to_split_assignment = {}
+    else:
     
-    # Compute desired split sizes for each dataset
-    desired_split_sizes = calculate_desired_split_sizes(
-        dataset_dicts,
-        datasets_splits_dict
+        # Read homology families
+        homology_family_file_path = homology_path / "sequence_families.tsv"
+        homology_family_dict = read_homology_file(homology_family_file_path)
+        
+        # Prepare global split tracking - Family ID: Train/Validation/Test
+        family_to_split_assignment = {}
+        
+        # Compute desired split sizes for each dataset
+        desired_split_sizes = calculate_desired_split_sizes(
+            dataset_dicts,
+            datasets_splits_dict
+            )
+        
+        # Assign families globally
+        family_to_split_assignment = assign_families_to_splits(
+            dataset_dicts,
+            homology_family_dict,
+            desired_split_sizes,
+            datasets_splits_dict,
+            priority_split,
+            training_assign_bias,
+            validation_assign_bias,
+            testing_assign_bias,
         )
-    
-    print("DESRIED SPLIT SIZES")
-    print(desired_split_sizes)
-    
-    # Assign families globally
-    family_to_split_assignment = assign_families_to_splits(
-        dataset_dicts,
-        homology_family_dict,
-        desired_split_sizes,
-        datasets_splits_dict,
-        priority_split,
-        training_assign_bias,
-        validation_assign_bias,
-        testing_assign_bias,
-    )
-    
-    # Get indices per dataset and per split based on assignment
-    datasets_split_indices = get_datasets_split_indices(
-        dataset_dicts,
-        homology_family_dict,
-        family_to_split_assignment,
-        datasets_splits_dict
-    )
-    
-    # Filter datasets
-    split_datasets = construct_filtered_datasets(
-        dataset_dicts,
-        datasets_split_indices,
-        datasets_splits_dict
+        
+        # Get indices per dataset and per split based on assignment
+        datasets_split_indices = get_datasets_split_indices(
+            dataset_dicts,
+            homology_family_dict,
+            family_to_split_assignment,
+            datasets_splits_dict
         )
-    
-    print_datasets(dataset_dicts, datasets_split_indices)
+        
+        # Save / load splits
+        if save_splits == True:
+        
+            save_splits_to_file(datasets_split_indices, dataset_dicts, splits_path)
+            
+        # Filter datasets
+        split_datasets = construct_filtered_datasets(
+            dataset_dicts,
+            datasets_split_indices
+            )
     
     # Remove wildtype sequences from inference splits
     if exclude_wildtype_from_inference:
@@ -75,13 +82,14 @@ def handle_splits(
         split_datasets["VALIDATION"] = remove_wt_from_split(split_datasets["VALIDATION"])
         split_datasets["TEST"] = remove_wt_from_split(split_datasets["TEST"])
     
-    # Save splits
-    save_training_sequences(results_path, datasets_split_indices, dataset_dicts)
+    # Save training sequences (depreciated)
+    #save_training_sequences(results_path, datasets_split_indices, dataset_dicts)
     test_subset_to_sequence_dict = create_subset_to_sequence_dict(split_datasets["TEST"])
 
     final_splits = {
         split: ConcatDataset(split_datasets[split].values())
-        for split in ["TRAIN", "VALIDATION", "TEST"] if split != []
+        for split, dict_check in split_datasets.items()
+        if split in ["TRAIN","VALIDATION","TEST"] and dict_check
     }
     
     # Use a sampler if desired
@@ -192,22 +200,10 @@ def assign_families_to_splits(
             
         family_subset_counts[family_id] = counts
 
-    # If there is a priority split
-    if priority_split != None:
-        
-        assign_families_to_priority_split(
-            priority_split,
-            family_subset_counts,
-            dataset_dicts,
-            datasets_splits_dict,
-            family_to_split_assignment,
-            split_counts_per_subset
-            )
-
     # Shuffle the family IDs
     all_family_ids = list(homology_family_dict.keys())
     np.random.shuffle(all_family_ids)
-    
+
     # Assign one family to each non-zero split
     family_to_split_assignment, split_counts_per_subset = assign_at_least_one_family_to_required_splits(
         family_subset_counts,
@@ -216,6 +212,18 @@ def assign_families_to_splits(
         family_to_split_assignment,
         split_counts_per_subset
         )
+
+    # If there is a priority split
+    if priority_split != None:
+        
+        family_to_split_assignment = assign_families_to_priority_split(
+            priority_split,
+            family_subset_counts,
+            dataset_dicts,
+            desired_split_sizes,
+            family_to_split_assignment,
+            split_counts_per_subset
+            )
     
     # Assign families using heuristics to find best way to fill up each split
     for family_id in all_family_ids:
@@ -242,6 +250,48 @@ def assign_families_to_splits(
     return family_to_split_assignment
 
 def assign_families_to_priority_split(
+    priority_split: str,
+    family_subset_counts: dict[str, dict[str, int]],
+    dataset_dicts: list[dict],
+    desired_split_sizes: dict[str, dict[str, int]],
+    family_to_split_assignment: dict[str, str],
+    split_counts_per_subset: dict[str, dict[str, int]],
+):
+    """
+    Greedily fill each subset's priority_split quota by choosing the
+    family that adds the most sequences for that subset until it
+    reaches its desired count.
+    """
+    
+    # All families not yet assigned
+    unassigned = set(family_subset_counts)
+
+    # Work subset-by-subset
+    for subset_dict in dataset_dicts:
+        subset = subset_dict["unique_key"]
+        target = desired_split_sizes[subset][priority_split]
+
+        # Keep adding until we hit or exceed the target, or run out of families
+        while split_counts_per_subset[subset][priority_split] < target and unassigned:
+            # pick family that contributes most to *this* subset
+            best = max(unassigned, key=lambda f: family_subset_counts[f][subset])
+            contrib = family_subset_counts[best][subset]
+            if contrib == 0:
+                # no remaining family can help this subset
+                break
+
+            # assign it
+            family_to_split_assignment[best] = priority_split
+            unassigned.remove(best)
+
+            # update *all* subsets’ counts
+            for sub in split_counts_per_subset:
+                split_counts_per_subset[sub][priority_split] += family_subset_counts[best][sub]
+
+    return family_to_split_assignment
+
+
+def old_assign_families_to_priority_split(
     priority_split: str,
     family_subset_counts: dict,
     dataset_dicts: list,
@@ -427,8 +477,7 @@ def get_datasets_split_indices(
 
 def construct_filtered_datasets(
     dataset_dicts: list,
-    datasets_split_indices,
-    datasets_splits_dict: dict
+    datasets_split_indices
     ):
     
     split_datasets = { "TRAIN": {}, "VALIDATION": {}, "TEST": {}, "UNASSIGNED": {}}
@@ -459,21 +508,19 @@ def print_datasets(dataset_dicts, datasets_split_indices):
 
 def remove_wt_from_split(split: dict) -> list:
     
-    if split is not {}:
+    if not split:
         
-        filtered_split = {}
-        
-        for dataset_name, dataset in split.items():
+        return split
     
-            keep_indices = [index for index, wt_flag in enumerate(dataset.wt_flags) if not wt_flag]
-            filtered_dataset = dataset.filter_by_indices(keep_indices)
-            filtered_split[dataset_name] = filtered_dataset
+    filtered_split = {}
         
-        return filtered_split
+    for dataset_name, dataset in split.items():
     
-    else:
+        keep_indices = [index for index, wt_flag in enumerate(dataset.wt_flags) if not wt_flag]
+        filtered_dataset = dataset.filter_by_indices(keep_indices)
+        filtered_split[dataset_name] = filtered_dataset
         
-        return {}
+    return filtered_split
 
 def save_training_sequences(
     save_directory: str,
@@ -732,28 +779,131 @@ def read_sequence_to_family(homology_tsv_path):
         
     return sequence_to_family_dict
 
-def use_thermompnn_splits(
+def save_splits_to_file(
+    datasets_split_indices,
+    dataset_dicts,
+    splits_path
+    ):
+    
+    # Sequence to split mapping
+    sequence_splits = {"TRAIN": [], "VALIDATION": [], "TEST": []}
+    # for each subset-dataset
+    for dataset_dict in dataset_dicts:
+        
+        key = dataset_dict["unique_key"]
+        aa_seqs = dataset_dict["dataset"].aa_seqs
+        
+        for split in ("TRAIN", "VALIDATION", "TEST"):
+            
+            for index in datasets_split_indices[key][split]:
+                
+                sequence_splits[split].append(aa_seqs[index])
+                
+    # Duplicate sequences should be in the same splits anyway, but just to be sure nothing breaks downstream
+    for split, sequences in sequence_splits.items():
+        
+        seen = set()
+        deduped = []
+        
+        for sequence in sequences:
+            
+            if sequence not in seen:
+                
+                seen.add(sequence)
+                deduped.append(sequence)
+                
+        sequence_splits[split] = deduped
+
+    with open(splits_path, "wb") as pickle_file:
+        
+        pickle.dump(sequence_splits, pickle_file)
+
+def load_sequence_splits_from_file(splits_file_path, dataset_dicts):
+    
+    with open(splits_file_path, "rb") as splits_file:
+        
+        sequence_splits = pickle.load(splits_file)
+
+    train_set = set(sequence_splits.get("TRAIN", []))
+    val_set   = set(sequence_splits.get("VALIDATION", []))
+    test_set  = set(sequence_splits.get("TEST", []))
+    datasets_split_indices = {}
+
+    datasets_split_indices = {dataset_dict["unique_key"]: {"TRAIN": [], "VALIDATION": [], "TEST": [], "UNASSIGNED": []} for dataset_dict in dataset_dicts}
+    
+    for dataset_dict in dataset_dicts:
+        
+        key = dataset_dict["unique_key"]
+        data = dataset_dict["dataset"]
+        
+        train_idx = []
+        val_idx   = []
+        test_idx  = []
+        unass_idx = []
+        
+        for i, sequence in enumerate(data.aa_seqs):
+            
+            if sequence in train_set:
+                
+                train_idx.append(i)
+                
+            elif sequence in val_set:
+                
+                val_idx.append(i)
+                
+            elif sequence in test_set:
+                
+                test_idx.append(i)
+                
+            else:
+                
+                unass_idx.append(i)
+        
+        datasets_split_indices[key] = {
+            "TRAIN": train_idx,
+            "VALIDATION": val_idx,
+            "TEST": test_idx,
+            "UNASSIGNED": unass_idx
+        }
+    
+    split_datasets = construct_filtered_datasets(
+            dataset_dicts,
+            datasets_split_indices
+            )
+    
+    return split_datasets
+
+def load_domain_splits_from_file(
+    splits_file_path,
     dataset_dicts: list,
     exclude_wildtype_from_inference: bool,
     batch_size: int,
     n_workers: int,
     ):
     
-    # Read in thermompnn splits
-    thermompnn_splits = pd.read_pickle("/Users/rc30/Documents/projects/ids_project/custom_model/splits/mega_splits.pkl")
-    thermompnn_train_split_domains = [domain.removesuffix('.pdb') for domain in thermompnn_splits["train"]]
-    thermompnn_test_split_domains = [domain.removesuffix('.pdb') for domain in thermompnn_splits["test"]]
+    # Read in splits
+    loaded_splits = pd.read_pickle(splits_file_path)
+    
+    if loaded_splits["train"][0].endswith(".pdb"):
+    
+        loaded_train_split_domains = [domain.removesuffix(".pdb") for domain in loaded_splits["train"]]
+        loaded_test_split_domains = [domain.removesuffix(".pdb") for domain in loaded_splits["test"]]
+    
+    else:
+        
+        loaded_train_split_domains = [domain for domain in loaded_splits["train"]]
+        loaded_test_split_domains = [domain for domain in loaded_splits["test"]]
     
     train_datasets = {}
     test_datasets  = {}
     
-    # Iterate through each dataset, though only megascale datasets will return anything
+    # Iterate through each dataset, sequences which were not part of the original splits file will not be used
     for dataset_dict in dataset_dicts:
         
         dataset_name = dataset_dict["unique_key"]
         dataset = dataset_dict["dataset"]
-        train_idx = [index for index, domain in enumerate(dataset.domain_names) if domain in thermompnn_train_split_domains]
-        test_idx  = [index for index, domain in enumerate(dataset.domain_names) if domain in thermompnn_test_split_domains]
+        train_idx = [index for index, domain in enumerate(dataset.domain_names) if domain in loaded_train_split_domains]
+        test_idx  = [index for index, domain in enumerate(dataset.domain_names) if domain in loaded_test_split_domains]
             
         train_dataset = dataset.filter_by_indices(train_idx)
         test_dataset  = dataset.filter_by_indices(test_idx)

@@ -23,7 +23,7 @@ def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list
         true_values = true_values[keep_mask]
         predicted_values = predicted_values[keep_mask]
         
-        plt.scatter(true_values, predicted_values, color = "red", label = "Predicted vs True", s = 0.1, alpha = np.clip((1000 / len(true_values)), 0, 1)
+        plt.scatter(true_values, predicted_values, color = "red", label = "Predicted vs True", s = 0.1, alpha = np.clip((1000 / len(true_values)), 0, 1))
         min_val = min(true_values.min(), predicted_values.min())
         max_val = max(true_values.max(), predicted_values.max())
         plt.plot([min_val, max_val], [min_val, max_val], "r--")

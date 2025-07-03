@@ -11,6 +11,8 @@ from torch.utils.data import Dataset
 # Local modules
 from splits import load_training_sequences
 
+MISSING_COLUMN = object()   # Used as sentinel
+
 class ProteinDataset(Dataset):
     
     def __init__(
@@ -76,6 +78,11 @@ class ProteinDataset(Dataset):
         
         dataset_rows = read_dataset_file(path)
         
+        # Ensure every row has a boolean in "wt_flag"
+        for row in dataset_rows:
+            
+            row["wt_flag"] = bool(strtobool(row.get(wt_flag_column, "False").strip()))
+            
         # If not WT flad column passed, assume all rows are non-WT
         if not wt_flag_column:
             
@@ -93,19 +100,19 @@ class ProteinDataset(Dataset):
 
         # Collect and check row attributes
         for row in dataset_rows:
-            
+
             aa_seq = row[aa_seq_column]
             
             # If the aa sequence contains unexpected values, it is not added to dataset
             if not is_valid_sequence(aa_seq, amino_acids):
-                
+
                 continue
             
             row, values, masks, keep_row = set_feature_values_and_masks(row, predicted_feature_columns)
             
             # Drop row if it has no valid value for any feature
             if not keep_row:
-                
+
                 continue
             
             # Add row's attributes to dataset attributes
@@ -187,6 +194,7 @@ def handle_data(
     datasets_config_dict: dict,
     is_filter_one_wildtype_per_domain: bool,
     predicted_features: list,
+    feature_remapping_dict: dict,
     amino_acids: str
     ) -> list:
     
@@ -205,9 +213,9 @@ def handle_data(
     for dataset_name, label in subsets_in_use:
         
         # For each requested predicted feature, check if the dataset has a column for it,
-        # if it does, pass it to constructor, if not, pass blank column name, which is handled by constructor
+        # if it does, pass it to constructor, if not, pass sentinel object MISSING_COLUMN, which is handled by constructor
         feature_column_mapping = {
-            feature: datasets_config_dict[dataset_name]["PREDICTED_FEATURE_COLUMNS"].get(feature, "")
+            feature: datasets_config_dict[dataset_name]["PREDICTED_FEATURE_COLUMNS"].get(feature, MISSING_COLUMN)
             for feature in predicted_features
         }
         label_column_mapping = datasets_config_dict[dataset_name]["LABEL_COLUMNS"]
@@ -233,6 +241,10 @@ def handle_data(
             "unique_key": f"{dataset_name}-{label}"
             })
         
+    # Apply and feature remapping so that, for example,
+    # activity can be treated as fitness for inference
+    dataset_dicts = apply_feature_remapping(dataset_dicts, feature_remapping_dict)
+    
     return dataset_dicts      
         
 def read_dataset_file(file_path: str) -> list:
@@ -295,9 +307,10 @@ def set_feature_values_and_masks(row, predicted_feature_columns):
 
     for feature, column in predicted_feature_columns.items():
         
-        row_feature_value = row.get(column, "")
+        row_feature_value = row.get(column, MISSING_COLUMN)
         
-        if row_feature_value != "" and is_tensor_ready(row_feature_value):
+        # If a specific column name wasn't assigned, it will default to the sentinel object (MISSING_COLUMN)
+        if row_feature_value != MISSING_COLUMN and is_tensor_ready(row_feature_value):
             
             value = float(row_feature_value)
             mask = True
@@ -313,6 +326,13 @@ def set_feature_values_and_masks(row, predicted_feature_columns):
         if mask:
             
             keep_row = True
+        
+        # Ensures we keep all WTs, downstream logic in label filtering later filters them to be 1 per domain,
+        # but this ensures even those without valid data get an embedding, but are masked out to do not contribute
+        # to training and inference
+        if row["wt_flag"]:
+            
+            keep_row = True
     
     return row, values, masks, keep_row
 
@@ -326,6 +346,7 @@ def filter_domains_with_one_wt(dataset):
         "domain_name": dataset.domain_names,
         "is_wt": dataset.wt_flags
     })
+    
     # Find domains where exactly one wt_flag is True
     valid = domain_wt_df.groupby("domain_name")["is_wt"].sum().eq(1)
     valid_domains = valid[valid].index
@@ -390,4 +411,29 @@ def handle_filtering(dataset_dicts):
     
         dataset_dicts[index] = dataset_dict
 
+    return dataset_dicts
+
+def apply_feature_remapping(dataset_dicts, remap_dict):
+    
+    """
+    Uses dict from config to remap features,
+    copies the values over and sets new feature mask to true
+    """
+    
+    for dataset_dict in dataset_dicts:
+        
+        for source, target in remap_dict.items():
+            
+            # Skip if not in dataset
+            if target not in dataset_dict["dataset"].feature_masks or source not in dataset_dict["dataset"].feature_masks:
+                
+                continue
+
+            for index in range(len(dataset_dict["dataset"].aa_seqs)):
+                
+                if dataset_dict["dataset"].feature_masks[source][index] and not dataset_dict["dataset"].feature_masks[target][index]:
+                    
+                    dataset_dict["dataset"].feature_masks[target][index]  = True
+                    dataset_dict["dataset"].feature_values[target][index] = dataset_dict["dataset"].feature_values[source][index]
+                    
     return dataset_dicts

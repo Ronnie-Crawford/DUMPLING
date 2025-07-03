@@ -2,6 +2,9 @@
 import subprocess
 import shutil
 import os
+from pathlib import Path
+
+MAX_FILENAME_LENGTH = 255
 
 def handle_homology(
     dataset_dicts,
@@ -43,7 +46,7 @@ def get_homology_path(package_folder, all_dataset_names):
     datasets_key = "-".join(sorted(all_dataset_names))
     homology_folder_path = package_folder / "homology" / f"homology[{datasets_key}]"
     
-    return homology_folder_path
+    return Path(safe_filename(homology_folder_path))
 
 def write_all_sequences_to_fasta(dataset_dicts, output_fasta):
     
@@ -164,3 +167,24 @@ def save_sequence_families(sequence_families, sequence_info, output_tsv):
                     original_dataset = seq_details["dataset_group_name"]
                     sequence = seq_details["sequence"]
                     tsv_file.write(f"{original_dataset}\t{family_id}\t{seq_id}\t{sequence}\n")
+
+def safe_filename(path):
+    
+    dirpath, name = os.path.split(path)
+    stem, ext = os.path.splitext(name)
+
+    if len(name) <= MAX_FILENAME_LENGTH:
+        
+        return path
+
+    # Remove vowels from the stem first
+    vowels = set("aeiouAEIOU")
+    no_vowel = "".join(ch for ch in stem if ch not in vowels)
+
+    # If still too long, truncate
+    truncated = no_vowel[: MAX_FILENAME_LENGTH - len(ext)]
+
+    safe_name = truncated + ext
+    safe_name = os.path.join(dirpath, safe_name)
+    
+    return safe_name
