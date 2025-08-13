@@ -383,7 +383,7 @@ def make_spoof_train_dataset(
     wt_flags = [False] * len(train_sequence_list)
     sequence_embeddings = [torch.zeros(0) for _ in range(len(train_sequence_list))]
     feature_values = {feature: [0.0] * len(train_sequence_list) for feature in predicted_features}
-    feature_masks  = { feature: [False] * len(train_sequence_list) for feature in predicted_features}
+    feature_masks  = {feature: [False] * len(train_sequence_list) for feature in predicted_features}
     labels = {}
 
     return ProteinDataset(

@@ -11,31 +11,31 @@ from visuals import plot_benchmark_grid
 def main(
     run_flag: str
     ):
-    
+
     """
     The entry for the package, allows choosing which pipeline to run via arguments.
     """
-    
+
     match run_flag:
-        
+
         case "train-inference":
-            
+
             train_and_test(config)
-        
+
         case "train":
-            
+
             train(config)
-        
+
         case "inference":
-            
+
             test(config)
-        
+
         case "ava-benchmarking":
-            
+
             results_path = all_against_all_benchmarking(config)
-            
+
             for output_feature in config["PREDICTED_FEATURES_LIST"]:
-       
+
                 plot_benchmark_grid(results_path, output_feature)
 
 if __name__ == "__main__":

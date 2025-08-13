@@ -14,6 +14,7 @@ class FFNN(nn.Module):
         input_size: int,
         output_features: list,
         hidden_layers: list,
+        head_layers: dict,
         dropout_layers: list,
         activation_functions: list
         ):
@@ -58,7 +59,7 @@ def handle_models(
     learning_rate: float,
     weight_decay: float,
     activation_functions: list,
-    loss_functions: list,
+    loss_functions_dict: dict,
     optimisers: list,
     results_path: str,
     device: str
@@ -79,9 +80,13 @@ def handle_models(
         activation_functions
         )
     optimiser = torch.optim.Adam(model.parameters(), lr = learning_rate, weight_decay = weight_decay)
-    criterion = get_loss_function(loss_functions[0])
+    # Change loss functions dict (selections) into criterion dict (instantiated objects)    
+    criterion_dict = {
+        feature: get_loss_function(loss_functions_dict[feature])
+        for feature in predicted_features
+        }
     
-    return model, criterion, optimiser
+    return model, criterion_dict, optimiser
 
 def get_model(
     downsteam_model_choice,
@@ -125,6 +130,21 @@ class ModePullLoss(nn.Module):
         pull_penalty = torch.min(dist_to_zero, dist_to_neg1).mean()
 
         return reg_loss + self.lam * pull_penalty
+    
+class ReliabilityBalancing(nn.Module):
+    
+    def __init__(self, base_loss, sigma_default = 0.05):
+        
+        super().__init__()
+        self.base_loss = base_loss
+        
+    def forward(self, predictions, targets, sigmas):
+        
+        regularised_loss = self.base_loss(predictions, targets)
+        
+        reliability_loss = regularised_loss * (sigmas / sigma_default)
+        
+        return reliability_loss
 
 def get_loss_function(loss_function_choice):
     
@@ -141,5 +161,9 @@ def get_loss_function(loss_function_choice):
         case "MODE-PULL":
             
             criterion = ModePullLoss(base_loss = nn.MSELoss(), lambda_reg = 0.1)
+        
+        case "RELIABILITY-BALANCE":
+            
+            criterion = ReliabilityBalancing(base_loss = nn.MSELoss(), sigma_default = 0.05)
           
     return criterion

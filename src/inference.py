@@ -12,7 +12,7 @@ def handle_inference(
     downstream_models,
     output_features,
     trained_model,
-    criterion,
+    criterion_dict,
     batch_size: int,
     test_subset_to_sequence_dict,
     device,
@@ -23,7 +23,7 @@ def handle_inference(
         
         case "FFNN":
             
-            test_loss, predictions_df = run_inference_on_ffnn(trained_model, dataloaders_dict["TEST"], criterion, device, output_features, results_path, batch_size)
+            test_loss, predictions_df = run_inference_on_ffnn(trained_model, dataloaders_dict["TEST"], criterion_dict, device, output_features, results_path, batch_size)
     
     save_results(predictions_df, test_subset_to_sequence_dict, results_path)
     
@@ -32,7 +32,7 @@ def handle_inference(
 def run_inference_on_ffnn(
     model,
     test_loader,
-    criterion,
+    criterion_dict,
     device: str,
     output_features: list,
     results_path,
@@ -71,7 +71,7 @@ def run_inference_on_ffnn(
 
                 if valid_preds.nelement() > 0:
                     
-                    feature_loss = criterion(valid_preds, valid_truths)
+                    feature_loss = criterion_dict[feature](valid_preds, valid_truths)
                     batch_losses.append(feature_loss.item())
                     
                 else:

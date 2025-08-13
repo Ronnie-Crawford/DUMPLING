@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoModel, AutoTokenizer, EsmModel, EsmForProteinFolding, EsmTokenizer
+from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, EsmModel, EsmForProteinFolding, EsmTokenizer
 
 def handle_embeddings(
     dataset_dicts: list,
@@ -213,7 +213,7 @@ def setup_model(model_selection: str, device: str):
         
         case "ESM2_T33_650M_UR50D":
         
-            model = EsmModel.from_pretrained("facebook/esm2_t33_650M_UR50D")
+            model = EsmModel.from_pretrained("facebook/esm2_t33_650M_UR50D")#.half()
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t33_650M_UR50D")
         
         case "ESM2_T36_3B_UR50D":
@@ -226,9 +226,35 @@ def setup_model(model_selection: str, device: str):
             model = EsmModel.from_pretrained("facebook/esm2_t48_15B_UR50D")
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t48_15B_UR50D")
         
+        case "PROGEN_2_SMALL":
+            
+            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-small", trust_remote_code = True)
+            tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-small", trust_remote_code = True)
+        
+        case "PROGEN_2_MEDIUM":
+            
+            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-medium", trust_remote_code = True)
+            tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-medium", trust_remote_code = True)
+        
+        case "PROGEN_2_LARGE":
+            
+            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-large", trust_remote_code = True)
+            tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-large", trust_remote_code = True)
+        
     model.eval()
     model.to(device)
-    embedding_size = model.config.hidden_size
+
+    if "hidden_size" in model.config:
+        
+        embedding_size = model.config.hidden_size
+        
+    elif "embed_dim" in model.config:
+        
+        embedding_size = model.config.embed_dim
+    
+    else:
+        
+        raise f"Could not retrieve embedding size, check the names of variables in model config: {model.config.keys()}"
     
     return model, embedding_size, tokeniser
 
@@ -246,7 +272,7 @@ def fetch_embeddings(
     
     pooled_batch_embeddings = []
     full_embeddings = [None] * len(dataset)
-    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers, persistent_workers = True)
+    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False)#, num_workers = n_workers, persistent_workers = True)
 
     with torch.no_grad():
 
@@ -347,6 +373,8 @@ def post_process_embeddings(
 
 def fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer):
     
+    #print(tokeniser.vocab)
+    tokeniser.pad_token = "<|pad|>" # Only needed by ProGen models
     inputs = tokeniser(sequences, padding = True, truncation = True, return_tensors = "pt", max_length = 1024)
     input_ids = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)

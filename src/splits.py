@@ -97,7 +97,7 @@ def handle_splits(
     
     if upsample_subsets_for_training == True:
         
-        train_sampler = apply_upsampling_to_train_split(split_datasets)
+        train_sampler = apply_subset_upsampling_to_train_split(split_datasets)
     
     # Load into dataloaders
     dataloaders_dict = splits_to_loaders(final_splits, batch_size, n_workers, train_sampler)
@@ -565,7 +565,7 @@ def create_subset_to_sequence_dict(split_subsets):
     
     return subset_to_sequence_dict
 
-def apply_upsampling_to_train_split(split_datasets):
+def apply_subset_upsampling_to_train_split(split_datasets):
     
     """
     Each subset can be vastly difference sizes compared to each other, so the aim is to use
@@ -592,7 +592,29 @@ def apply_upsampling_to_train_split(split_datasets):
         # Repeat inv exactly 'length' times (one weight per example in that subset)
         weights.extend([inverse] * length)
 
-    sample_weights = torch.DoubleTensor(weights)
+    subset_weights = weights
+    
+    ##### Adding severity weighting ######
+    all_feature_values = []
+    all_feature_masks = []
+
+    for name in split_datasets["TRAIN"]:
+        ds = split_datasets["TRAIN"][name]
+        all_feature_values.extend(ds.feature_values["APCA_FITNESS"])
+        all_feature_masks.extend(ds.feature_masks["APCA_FITNESS"])
+
+    
+    severity_weights = find_severity_weights(
+        feature_values=all_feature_values,
+        feature_masks=all_feature_masks,
+        lower_percentile=2, upper_percentile=99, step=0.05
+    )
+
+    
+    final_weights = subset_weights * severity_weights
+    ######################################
+    
+    sample_weights = torch.DoubleTensor(final_weights)
     num_samples = sample_weights.numel()
     
     # Create WeightedRandomSampler
@@ -603,6 +625,66 @@ def apply_upsampling_to_train_split(split_datasets):
         )
     
     return train_sampler
+
+def find_severity_weights(feature_values, feature_masks, lower_percentile = 2, upper_percentile = 99, step = 0.05):
+    
+    """
+    Return a weight for each sample such that each severity bin is equally represented.
+    
+    Args:
+        feature_values: list or np.array of values for the feature
+        feature_masks: list or np.array of bools for valid values
+        lower_percentile: Lower percentile (exclude outliers)
+        upper_percentile: Upper percentile (exclude outliers)
+        step: Bin width
+        
+    Returns:
+        np.array of sample weights, same length as input
+    """
+    
+    feature_values = np.array(feature_values)
+    feature_masks = np.array(feature_masks)
+    
+    # Only valid values
+    valid_values = feature_values[feature_masks]
+    
+    if len(valid_values) == 0:
+        return np.zeros_like(feature_values, dtype=float)
+    
+    # Compute bin range as before
+    low = np.percentile(valid_values, lower_percentile)
+    high = np.percentile(valid_values, upper_percentile)
+    
+    def round_nearest(x, base=0.05):
+        return round(x / base) * base
+    
+    low_rounded = round_nearest(low, step)
+    high_rounded = round_nearest(high, step)
+    if high_rounded <= low_rounded:
+        high_rounded = low_rounded + step
+    
+    n_bins = int(np.ceil((high_rounded - low_rounded) / step))
+    bin_edges = np.linspace(low_rounded, high_rounded, n_bins + 1)
+    
+    # Assign each valid sample to a bin
+    bin_indices = np.digitize(feature_values, bin_edges) - 1  # -1 so bins start at 0
+    # For samples outside edges (less than low, or greater than high), clamp to edge bins
+    bin_indices = np.clip(bin_indices, 0, n_bins - 1)
+    
+    # Count samples per bin (only valid)
+    bin_counts = np.bincount(bin_indices[feature_masks], minlength=n_bins)
+    
+    # Compute weights: inverse count for each bin
+    weights = np.ones_like(feature_values, dtype=float)
+    for i in range(len(feature_values)):
+        if not feature_masks[i]:
+            weights[i] = 0.0   # Or 1.0 if you want, but 0 means not upsampled at all
+        else:
+            bin_idx = bin_indices[i]
+            count = bin_counts[bin_idx] if bin_counts[bin_idx] > 0 else 1
+            weights[i] = 1.0 / count
+    
+    return weights
 
 def splits_to_loaders(
     splits: dict,

@@ -8,7 +8,7 @@ import torch
 def handle_training_models(
     dataloaders,
     model,
-    criterion,
+    criterion_dict,
     optimiser,
     output_features,
     embedding_size,
@@ -29,7 +29,7 @@ def handle_training_models(
             trained_model = train_ffnn_from_embeddings(
                 dataloaders,
                 model,
-                criterion,
+                criterion_dict,
                 optimiser,
                 output_features,
                 results_path,
@@ -46,7 +46,7 @@ def handle_training_models(
 def train_ffnn_from_embeddings(
     dataloaders: dict,
     model,
-    criterion,
+    criterion_dict,
     optimiser,
     output_features: list,
     results_path,
@@ -105,7 +105,7 @@ def train_ffnn_from_embeddings(
                 
                 if predictions[output_feature].masked_select(masks[output_feature]).nelement() > 0:
                     
-                    losses[output_feature] = criterion(
+                    losses[output_feature] = criterion_dict[output_feature](
                         predictions[output_feature].masked_select(masks[output_feature]),
                         values[output_feature].masked_select(masks[output_feature])
                         )
@@ -173,7 +173,7 @@ def train_ffnn_from_embeddings(
                         
                         if output_feature_predictions[output_feature].masked_select(output_feature_masks[output_feature]).nelement() > 0:
                 
-                            output_feature_losses[output_feature] = criterion(
+                            output_feature_losses[output_feature] = criterion_dict[output_feature](
                                 output_feature_predictions[output_feature].masked_select(output_feature_masks[output_feature]),
                                 output_feature_values[output_feature].masked_select(output_feature_masks[output_feature])
                                 )

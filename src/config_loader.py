@@ -108,7 +108,10 @@ def format_config(config):
     config["DIMENSIONAL_REDUCTION_CHOICE"] = [key for key, value in config["UPSTREAM_MODELS"]["POSTPROCESSING"]["DIMENSIONAL_REDUCTION"].items() if value][0]
     config["DOWNSTREAM_MODELS_LIST"] = [key for key, value in config["DOWNSTREAM_MODELS"]["MODEL_TYPE"].items() if value]
     config["ACTIVATION_FUNCTIONS_LIST"] = [key for key, value in config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["ACTIVATION_FUNCTIONS"].items() if value]
-    config["LOSS_FUNCTIONS"] = [key for key, value in config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["LOSS_FUNCTIONS"].items() if value]
+    config["LOSS_FUNCTIONS"] = {
+    feature: next((loss for loss, enabled in losses.items() if enabled), None)
+        for feature, losses in config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["LOSS_FUNCTIONS"].items()
+    }
     config["OPTIMISERS"] = [key for key, value in config["DOWNSTREAM_MODELS"]["MODEL_ARCHITECTURE"]["OPTIMISERS"].items() if value]
     
     assert len(config["PREDICTED_FEATURES_LIST"]) > 0, "Must have non-zero amount of predicted features."
