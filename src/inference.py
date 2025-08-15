@@ -1,6 +1,7 @@
 # Standard modules
 import datetime
 import gc
+from typing import cast
 
 # Third-party modules
 import numpy as np
@@ -17,16 +18,20 @@ def handle_inference(
     test_subset_to_sequence_dict,
     device,
     results_path,
-    ) -> tuple[pd.DataFrame, dict, dict]:
+    ) -> pd.DataFrame:
 
     match downstream_models[0]:
-        
+
         case "FFNN":
-            
+
             test_loss, predictions_df = run_inference_on_ffnn(trained_model, dataloaders_dict["TEST"], criterion_dict, device, output_features, results_path, batch_size)
-    
+
+        case _:
+
+            raise ValueError(f"Unknown model_selection: {downstream_models[0]}")
+
     save_results(predictions_df, test_subset_to_sequence_dict, results_path)
-    
+
     return predictions_df
 
 def run_inference_on_ffnn(
@@ -70,12 +75,12 @@ def run_inference_on_ffnn(
                 valid_truths = truths[masks]
 
                 if valid_preds.nelement() > 0:
-                    
+
                     feature_loss = criterion_dict[feature](valid_preds, valid_truths)
                     batch_losses.append(feature_loss.item())
-                    
+
                 else:
-                    
+
                     batch_losses.append(0.0)
 
                 # Store predictions and truths (masked)
@@ -97,58 +102,59 @@ def run_inference_on_ffnn(
     average_test_loss = total_loss / len(test_loader)
 
     # Concatenate results from all batches
-    final_results = {
+    final_results: dict = {
         "domain": domains,
         "sequences": sequences
     }
 
     for feature in output_features:
-        
+
         final_results[f"{feature}_predictions"] = np.concatenate(predictions_dict[feature])
         final_results[f"{feature}_truth"] = np.concatenate(truths_dict[feature])
 
     results_df = pd.DataFrame(final_results)
-    
+
     del test_loader
     gc.collect()
 
     return average_test_loss, results_df
 
 def save_results(results_df, test_subset_to_sequence_dict, results_path):
-    
+
     pair = results_path.name
     # strip off the leading "trained_on_"
     if pair.startswith("trained_on_") and "_tested_on_" in pair:
-        
+
         _, rest = pair.split("trained_on_", 1)
         trained_on, tested_on = rest.split("_tested_on_")
-        
+
     else:
-        
+
         trained_on, tested_on = "unknown", "unknown"
-    
+
     # Header
     timestamp = datetime.datetime.now().isoformat()
     header_lines = [
-        f"# Timestamp:  {timestamp}\n",
+        f"# Timestamp: {timestamp}\n",
         f"# Trained_on: {trained_on}\n",
-        f"# Tested_on:  {tested_on}\n"
+        f"# Tested_on: {tested_on}\n"
     ]
     with open((results_path / "results.csv"), "w") as results_file:
-        
+
         results_file.writelines(header_lines)
-    
+
     # Map results to subsets
     subset_rows = []
-    
+
     for subset_name, sequence_list in test_subset_to_sequence_dict.items():
-        
+
         for sequence in sequence_list:
-            
+
             subset_rows.append({"sequences": sequence, "subset": subset_name})
-            
-    subset_df = pd.DataFrame(subset_rows).drop_duplicates(subset = ["sequences", "subset"])
+
+    subset_rows_df = pd.DataFrame(subset_rows)
+    subset_df = cast(pd.DataFrame, subset_rows_df.drop_duplicates(subset = ["sequences", "subset"]))
     results_df = pd.merge(results_df, subset_df, on = "sequences", how = "left")
-    
+
     # Data
     results_df.to_csv(results_path / "results.csv", mode = "a", index = False)

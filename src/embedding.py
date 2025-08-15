@@ -1,72 +1,92 @@
 #Standard modules
+import shutil
 import gc
 import itertools
 import hashlib
 import pickle
 import os
 from pathlib import Path
+from collections import defaultdict
+import re
+from typing import cast
+import copy
+
+from torch.nn import attention
+
+# Local modules
+from datasets import ProteinDataset
 
 # Third-party modules
 import numpy as np
 import pandas as pd
 import torch
+from torch.cuda import device
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, EsmModel, EsmForProteinFolding, EsmTokenizer
+from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, EsmModel, AutoModelForMaskedLM, EsmForProteinFolding, EsmTokenizer, EsmTokenizer, EsmForMaskedLM
 
 def handle_embeddings(
-    dataset_dicts: list,
+    unique_datasets_dict: dict,
     embedding_model_names: list,
     batch_size: int,
+    special_tokens_in_context_flag: bool,
+    special_tokens_in_pool_flag: bool,
     embedding_layers: list,
     embedding_types: list,
     dimensional_reduction_method: str,
     n_desired_dimensions: int,
-    normalise_embeddings: bool,
+    normalise_embeddings_flag: bool,
     wildtype_concat: bool,
     wildtype_delta: bool,
     base_path,
-    device: str,
-    n_workers: int
+    device: torch.device,
+    n_workers: int,
+    amino_acids: str
     ):
-    
+
     """
     The handler for embeddings, runs the upstream models and coordinates and post-processing on the extracted embeddings:
     concatination, dimensional reduction, etc.
     """
-    
-    dataset_dicts, embedding_size = load_embeddings(
-        dataset_dicts,
+
+    unique_datasets_dict, embedding_size = load_embeddings(
+        unique_datasets_dict,
         batch_size,
+        special_tokens_in_context_flag,
+        special_tokens_in_pool_flag,
         embedding_model_names,
         embedding_layers,
         embedding_types,
         base_path,
         device,
-        n_workers
+        n_workers,
+        amino_acids
         )
-    
-    dataset_dicts = post_process_embeddings(
-        dataset_dicts,
-        normalise_embeddings,
+
+    unique_datasets_dict = post_process_embeddings(
+        unique_datasets_dict,
+        normalise_embeddings_flag,
         wildtype_concat,
         wildtype_delta,
         dimensional_reduction_method,
         n_desired_dimensions
         )
-    
-    return dataset_dicts, embedding_size
+
+    return unique_datasets_dict, embedding_size
 
 def load_embeddings(
-    dataset_dicts: dict,
+    unique_datasets_dict: dict,
     batch_size: int,
-    model_selections: list,
-    embedding_layers: list,
-    embedding_types: list,
+    special_tokens_in_context_flag: bool,
+    special_tokens_in_pool_flag: bool,
+    model_selections: list[str],
+    embedding_layers: list[int],
+    embedding_types: list[str],
     package_folder: Path,
-    device: str,
-    n_workers: int
-    ) -> tuple[list, int]:
-    
+    device: torch.device,
+    n_workers: int,
+    amino_acids: str
+    ) -> tuple[dict, int]:
+
     """
     Loads embeddings for each dataset, embeddings are saved for each dataset, not dataset-label subset,
     to save time generating embeddings and save space storing them.
@@ -77,312 +97,819 @@ def load_embeddings(
     but it is possible to load more and the results will be concatinated together,
     however I find that the increase in dimensionality quickly loses any benefit that increasing the available information might have had.
     """
-    
+
     # Make list of all combinations of upstream models, hidden layer to extract embedding from, post-processing to apply to embeddings
     embedding_combinations = list(itertools.product(model_selections, embedding_layers, embedding_types))
-    # Create dataframe to store all emebddings
-    merged_embeddings_df = pd.DataFrame()
-    
-    for index, dataset_dict in enumerate(dataset_dicts):
-        
-        dataset_name = dataset_dict["dataset_name"]
-        dataset = dataset_dict["dataset"]
-        embeddings_list = []
+    # Create dict to store all emebddings, once per dataset
+    unique_embeddings = {}
+
+    for dataset_name, dataset in unique_datasets_dict.items():
+
         dataset_hash = compute_dataset_hash(dataset)
-        
+        embeddings_list = []
+
         for model_selection, embedding_layer, embedding_type in embedding_combinations:
-            
+
             # Each embedding choice fills its own dataframe, before being merged later
             embedding_df = pd.DataFrame()
-            embedding_sorted_path = package_folder / f"embeddings/dataset[{dataset_name}]" / f"model[{model_selection}]" / f"layer[{embedding_layer}]" / f"embedding_type[{embedding_type}]"
+            embedding_sorted_path = package_folder / f"embeddings/dataset[{dataset_name}]" / f"model[{model_selection}]" / f"layer[{embedding_layer}]" / f"embedding_type[{embedding_type}]" / f"special_token_context[{special_tokens_in_context_flag}]" / f"special_token_pooling[{special_tokens_in_pool_flag}]"
             embedding_tensor_path = embedding_sorted_path / "embeddings_tensor.pt"
             metadata_path = embedding_sorted_path / "metadata.pkl"
-            
+            partial_embeddings_path = embedding_sorted_path / "partial_embeddings"
+
             # Attempt to load embeddings and metadata
             try:
-                
+
                 # Load embeddings on CPU for faster access
                 embeddings = torch.load(embedding_tensor_path, map_location = "cpu")
 
+                # If full embeddings can be loaded, we can remove any partial embeddings still around
+                if os.path.exists(partial_embeddings_path):
+
+                    shutil.rmtree(partial_embeddings_path)
+
                 # Load metadata
                 with open(metadata_path, "rb") as f:
-                    
+
                     metadata = pickle.load(f)
 
                 # Compare dataset hash
                 if metadata.get("dataset_hash") != dataset_hash:
-                    
+
                     raise ValueError("Dataset hash mismatch")
 
                 # If everything is fine, append embeddings to the list
                 embeddings_list.append(embeddings)
-            
+
             except (FileNotFoundError, ValueError, EOFError, pickle.UnpicklingError) as e:
-                
-                print(f"Could not load embeddings for dataset '{dataset_name}' due to {e}. Generating embeddings.")
-                
+
+                print(f"Could not load embeddings for dataset '{dataset_name}', Generating embeddings.")
+
                 # Ensure the directory exists
                 if not os.path.exists(embedding_sorted_path):
-                    
+
                     os.makedirs(embedding_sorted_path)
 
-                model, embedding_size, tokeniser = setup_model(model_selection, device)
-                embeddings = fetch_embeddings(dataset, model, tokeniser, batch_size, device, embedding_type, embedding_layer, embedding_size, n_workers)
-                
+                embeddings = fetch_embeddings(
+                    dataset,
+                    model_selection,
+                    batch_size,
+                    special_tokens_in_context_flag,
+                    special_tokens_in_pool_flag,
+                    device,
+                    embedding_type,
+                    embedding_layer,
+                    n_workers,
+                    partial_embeddings_path,
+                    amino_acids
+                )
+
                 # Save embeddings and metadata
                 torch.save(embeddings, embedding_tensor_path)
                 metadata = {"dataset_hash": dataset_hash}
-                
+
+                # If full embeddings have been saved, we can remove any partial embeddings still around
+                if os.path.exists(partial_embeddings_path):
+
+                    shutil.rmtree(partial_embeddings_path)
+
                 with open(metadata_path, 'wb') as f:
-                    
+
                     pickle.dump(metadata, f)
-                
+
                 # Append embeddings to the list
                 embeddings_list.append(embeddings)
-        
-        dataset.sequence_embeddings = concatenate_embeddings(embeddings_list)
-        dataset_dicts[index]["dataset"] = dataset
-    
+
+            print(f"Loaded embeddings for [{dataset_name}] - [{model_selection}] - [{embedding_layer}] - [{embedding_type}]")
+
+        unique_embeddings[dataset_name] = embeddings_list
+
+    for dataset_name, dataset in unique_datasets_dict.items():
+
+        dataset.sequence_embeddings = unique_embeddings[dataset_name][0]
+
+    del unique_embeddings
+    gc.collect()
+
     # Fetch arbitrary dataset to check shape, should all be the same so order does not matter
-    first_dataset = dataset_dicts[0]["dataset"]
+    first_dataset = next(iter(unique_datasets_dict.values()))
     embedding_dimensions = first_dataset.sequence_embeddings[0].dim()
     embedding_size = first_dataset.sequence_embeddings[0].shape[embedding_dimensions - 1]
 
-    return dataset_dicts, embedding_size
+    return unique_datasets_dict, embedding_size
 
 def compute_dataset_hash(dataset):
-    
-    # Hashing everything at once was causing slow down,
-    # so instead we incrementally hash each sequence in turn
-    
+
+    """
+    Hashing everything at once was causing slow down,
+    so instead we incrementally hash each sequence in turn
+    """
+
     md5 = hashlib.md5()
-    
+
     for sequence in dataset.aa_seqs:
-        
+
         md5.update(sequence.encode("utf-8"))
-        
+
     return md5.hexdigest()
 
-def setup_model(model_selection: str, device: str):
-    
+def setup_model(model_selection: str, device: torch.device):
+
     """
     This feels like a hacky way to fetch the models but I can't think of a more pythonic way that doesn't break.
     """
-    
+    context_length = None
+
     match model_selection:
-        
+
         case "AMPLIFY_120M":
 
-            model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_120M", trust_remote_code = True)
             tokeniser = AutoTokenizer.from_pretrained("chandar-lab/AMPLIFY_120M", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_120M", trust_remote_code = True)
+            model = model.half()    # Xformers module which AMPLIFY uses requires half-precision
+            additive_attention_flag = True
+            attention_bias_allignment_mask = True
+            add_masked_structure_flag = False
+            context_length = 2048
 
         case "AMPLIFY_120M_base":
 
-            model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_120M_base", trust_remote_code = True)
             tokeniser = AutoTokenizer.from_pretrained("chandar-lab/AMPLIFY_120M_base", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_120M_base", trust_remote_code = True)
+            model = model.half()    # Xformers module which AMPLIFY uses requires half-precision
+            additive_attention_flag = True
+            attention_bias_allignment_mask = True
+            add_masked_structure_flag = False
+            context_length = 2048
 
         case "AMPLIFY_350M":
 
-            model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_350M", trust_remote_code = True)
+            # Currently broken, will find a fix
+            raise NotImplementedError("Doesn't quite work yet.")
             tokeniser = AutoTokenizer.from_pretrained("chandar-lab/AMPLIFY_350M", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_350M", trust_remote_code = True)
+            model = model.half()    # Xformers module which AMPLIFY uses requires half-precision
+            additive_attention_flag = True
+            attention_bias_allignment_mask = True
+            add_masked_structure_flag = False
+            context_length = 2048
 
         case "AMPLIFY_350M_base":
 
-            model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_350M_base", trust_remote_code = True)
+            # Currently broken, will find a fix
+            raise NotImplementedError("Doesn't quite work yet.")
             tokeniser = AutoTokenizer.from_pretrained("chandar-lab/AMPLIFY_350M_base", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_350M_base", trust_remote_code = True)
+            model = model.half()    # Xformers module which AMPLIFY uses requires half-precision
+            additive_attention_flag = True
+            attention_bias_allignment_mask = True
+            add_masked_structure_flag = False
+            context_length = 2048
 
         case "ESMFold":
-            
-            model = EsmForProteinFolding.from_pretrained("./models/upstream_models/esmfold_3B_v1", output_hidden_states = True)
-            tokeniser = EsmTokenizer.from_pretrained("./models/upstream_models/esmfold_3B_v1")
-        
+
+            # Currently broken, needs python version incompatable with everything else
+            raise NotImplementedError("Doesn't quite work yet.")
+            tokeniser = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
+            tokeniser = process_tokeniser(tokeniser)
+            model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", output_hidden_states = True)
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "ESM2_T6_8M_UR50D":
-            
-            model = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
+
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t6_8M_UR50D")
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "ESM2_T12_35M_UR50D":
-            
-            model = EsmModel.from_pretrained("facebook/esm2_t12_35M_UR50D")
+
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t12_35M_UR50D")
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = EsmModel.from_pretrained("facebook/esm2_t12_35M_UR50D")
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "ESM2_T30_150M_UR50D":
-            
-            model = EsmModel.from_pretrained("facebook/esm2_t30_150M_UR50D")
+
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t30_150M_UR50D")
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = EsmModel.from_pretrained("facebook/esm2_t30_150M_UR50D")
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "ESM2_T33_650M_UR50D":
-        
-            model = EsmModel.from_pretrained("facebook/esm2_t33_650M_UR50D")#.half()
+
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t33_650M_UR50D")
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = EsmModel.from_pretrained("facebook/esm2_t33_650M_UR50D")
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "ESM2_T36_3B_UR50D":
 
-            model = EsmModel.from_pretrained("facebook/esm2_t36_3B_UR50D")
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t36_3B_UR50D")
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = EsmModel.from_pretrained("facebook/esm2_t36_3B_UR50D")
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "ESM2_T48_15B_UR50D":
-            
-            model = EsmModel.from_pretrained("facebook/esm2_t48_15B_UR50D")
+
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t48_15B_UR50D")
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = EsmModel.from_pretrained("facebook/esm2_t48_15B_UR50D")
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "PROGEN_2_SMALL":
-            
-            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-small", trust_remote_code = True)
+
             tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-small", trust_remote_code = True)
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-small", trust_remote_code = True)
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "PROGEN_2_MEDIUM":
-            
-            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-medium", trust_remote_code = True)
+
             tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-medium", trust_remote_code = True)
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-medium", trust_remote_code = True)
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
         case "PROGEN_2_LARGE":
-            
-            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-large", trust_remote_code = True)
+
             tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-large", trust_remote_code = True)
-        
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-large", trust_remote_code = True)
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
+        case "PROSST_2048":
+
+            tokeniser = AutoTokenizer.from_pretrained("AI4Protein/ProSST-2048", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModelForMaskedLM.from_pretrained("AI4Protein/ProSST-2048", trust_remote_code = True)
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = False
+
+        case "SAPROT_650M":
+
+            tokeniser = EsmTokenizer.from_pretrained("westlake-repl/SaProt_650M_AF2")
+            tokeniser = process_tokeniser(tokeniser)
+            model = EsmForMaskedLM.from_pretrained("westlake-repl/SaProt_650M_AF2")
+            additive_attention_flag = False
+            attention_bias_allignment_mask = False
+            add_masked_structure_flag = True
+
+        case _:
+
+            raise ValueError(f"Unknown model_selection: {model_selection}")
+
     model.eval()
-    model.to(device)
+    model.to(device)    # type: ignore
 
     if "hidden_size" in model.config:
-        
+
         embedding_size = model.config.hidden_size
-        
+
     elif "embed_dim" in model.config:
-        
+
         embedding_size = model.config.embed_dim
-    
+
     else:
-        
-        raise f"Could not retrieve embedding size, check the names of variables in model config: {model.config.keys()}"
-    
-    return model, embedding_size, tokeniser
+
+        raise ValueError(f"Could not retrieve embedding size, check the names of variables in model config: {model.config.keys()}")
+
+    return model, embedding_size, tokeniser, additive_attention_flag, attention_bias_allignment_mask, add_masked_structure_flag, context_length
+
+def process_tokeniser(tokeniser):
+
+    """
+    Tokenisers vary between models, some including BOS and EOS tokens, some having CLS tokens,
+    some include special tokens automatically while others do not.
+    Here we attempt to standardise these.
+    """
+
+    # Some tokenisers don't come with a pad token set, so we set one.
+    if tokeniser.pad_token is None:
+
+        tokeniser.add_special_tokens({"pad_token": "<|pad|>"})
+        tokeniser.pad_token = "<|pad|>"
+
+    tokeniser.bos_token = tokeniser.cls_token
+    tokeniser.bos_token_id = tokeniser.cls_token_id
+
+    return tokeniser
 
 def fetch_embeddings(
-    dataset: Dataset,
-    model,
-    tokeniser,
+    dataset: ProteinDataset,
+    model_selection: str,
     batch_size: int,
-    device: str,
+    special_tokens_in_context_flag: bool,
+    special_tokens_in_pool_flag: bool,
+    device: torch.device,
     embedding_type: str,
     embedding_layer: int,
-    embedding_size: int,
-    n_workers: int
-) -> torch.tensor:
-    
-    pooled_batch_embeddings = []
-    full_embeddings = [None] * len(dataset)
-    dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False)#, num_workers = n_workers, persistent_workers = True)
+    n_workers: int,
+    checkpoint_dir: Path,
+    amino_acids: str
+    ) -> list[torch.Tensor]:
 
-    with torch.no_grad():
+        # Make sure checkpoint dir exists
+        os.makedirs(checkpoint_dir, exist_ok = True)
+        # Scan for already saved temp files
+        completed_batches = set()
+        pattern = re.compile(r"checkpointed_embeddings_(\d+)-(\d+)\.pkl")
 
-        for batch_index, batch in enumerate(dataloader):
+        for fname in os.listdir(checkpoint_dir):
 
-            sequences = batch["aa_seq"]
-            batch_embeddings = fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer)
+            match = pattern.match(fname)
 
-            if embedding_type == "RAW":
-                
-                pooled_batch_embeddings = []
-                
-                for sequence_index, seq in enumerate(batch["aa_seq"]):
-                    
-                    sequence_embeddings = batch_embeddings[sequence_index, 1:len(seq) + 1, :].detach().cpu()
-                    pooled_batch_embeddings.append(sequence_embeddings)
+            if match:
 
-            elif embedding_type == "MEAN":
-                
-                pooled_batch_embeddings = batch_embeddings.mean(dim = 1).float().detach().cpu()
+                start_batch, end_batch = map(int, match.groups())
+                completed_batches.update(range(start_batch, end_batch + 1))
 
-            elif embedding_type == "MAX":
+        full_embeddings = [None] * len(dataset)
+        dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers, persistent_workers = True)
+        model, embedding_size, tokeniser, additive_attention_flag, attention_bias_allignment_mask, add_masked_structure_flag, context_length = setup_model(model_selection, device)
 
-                pooled_batch_embeddings = batch_embeddings.max(dim = 1).values.detach().cpu()
+        with torch.no_grad():
 
-            elif embedding_type == "MIN":
+            model = model.to(device)    # type: ignore
+            model.eval()
 
-                pooled_batch_embeddings = batch_embeddings.min(dim = 1).values.detach().cpu()
+            if context_length == None:
 
-            elif embedding_type == "STD":
+                context_length = get_context_length(model)
 
-                pooled_batch_embeddings = batch_embeddings.std(dim = 1).float().detach().cpu()
+            batch_accumulation = []
+            batch_indices = []
 
-            elif embedding_type == "PC1":
+            for batch_index, batch in enumerate(dataloader):
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 1, device).detach().cpu()
+                if batch_index in completed_batches:
 
-            elif embedding_type == "PC2":
+                    continue
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 2, device).detach().cpu()
+                sequences = batch["aa_seq"]
+                batch_embeddings, pool_mask = fetch_batch_embeddings(
+                    sequences,
+                    model,
+                    tokeniser,
+                    special_tokens_in_context_flag,
+                    special_tokens_in_pool_flag,
+                    additive_attention_flag,
+                    attention_bias_allignment_mask,
+                    add_masked_structure_flag,
+                    device,
+                    embedding_layer,
+                    context_length,
+                    amino_acids
+                    )
 
-            elif embedding_type == "PC3":
+                if embedding_type == "RAW":
 
-                pooled_batch_embeddings = fit_principal_components(batch_embeddings, 3, device).detach().cpu()
+                    # Need to update embedding types other than Mean.
+                    raise NotImplementedError("Doesn't quite work yet.")
+                    pooled_batch_embeddings =[]
 
-            else:
+                    for sequence_index, seq in enumerate(batch["aa_seq"]):
 
-                raise Exception("Invalid embedding type.")
+                        sequence_embeddings = batch_embeddings[sequence_index, 1:len(seq) + 1, :].detach().cpu()
+                        pooled_batch_embeddings.append(sequence_embeddings)
 
-            for index in range(len(sequences)):
+                if embedding_type == "MEAN":
 
-                full_embeddings[batch_index * batch_size + index] = pooled_batch_embeddings[index]
+                    sum_embeddings = batch_embeddings.sum(dim = 1)
+                    counts = pool_mask.sum(dim = 1).clamp(min = 1).unsqueeze(-1)
+                    pooled_batch_embeddings = sum_embeddings / counts
 
-            # A desperate attempt to claw back any RAM
-            if batch_index % 10 == 0:
-                
-                del batch_embeddings, pooled_batch_embeddings
-                torch.cuda.empty_cache()
-                torch.mps.empty_cache()
+                elif embedding_type == "MAX":
 
-            print(f"Fetched embedding {batch_index + 1} out of {len(dataloader)}")
+                    # Need to update embedding types other than Mean.
+                    raise NotImplementedError("Doesn't quite work yet.")
+                    pooled_batch_embeddings = batch_embeddings.max(dim = 1).values.detach().cpu()
 
-    return full_embeddings
+                elif embedding_type == "MIN":
+
+                    # Need to update embedding types other than Mean.
+                    raise NotImplementedError("Doesn't quite work yet.")
+                    pooled_batch_embeddings = batch_embeddings.min(dim = 1).values.detach().cpu()
+
+                elif embedding_type == "STD":
+
+                    # Need to update embedding types other than Mean.
+                    raise NotImplementedError("Doesn't quite work yet.")
+                    pooled_batch_embeddings = batch_embeddings.std(dim = 1).float().detach().cpu()
+
+                elif embedding_type == "PC1":
+
+                    # Need to update embedding types other than Mean.
+                    raise NotImplementedError("Doesn't quite work yet.")
+                    pooled_batch_embeddings = fit_principal_components(batch_embeddings, 1, device).detach().cpu()
+
+                elif embedding_type == "PC2":
+
+                    # Need to update embedding types other than Mean.
+                    raise NotImplementedError("Doesn't quite work yet.")
+                    pooled_batch_embeddings = fit_principal_components(batch_embeddings, 2, device).detach().cpu()
+
+                elif embedding_type == "PC3":
+
+                    # Need to update embedding types other than Mean.
+                    raise NotImplementedError("Doesn't quite work yet.")
+                    pooled_batch_embeddings = fit_principal_components(batch_embeddings, 3, device).detach().cpu()
+
+                else:
+
+                    raise Exception("Invalid embedding type.")
+
+                # Store in memory until time to save
+                batch_accumulation.append(pooled_batch_embeddings)
+                batch_indices.append(batch_index)
+
+                # Save every X batches
+                if (batch_index + 1) % 100 == 0 or (batch_index + 1) == len(dataloader):
+
+                    temp_fname = os.path.join(checkpoint_dir, f"checkpointed_embeddings_{batch_indices[0]}-{batch_indices[-1]}.pkl")
+
+                    with open(temp_fname, "wb") as f:
+
+                        pickle.dump(batch_accumulation, f)
+
+                    batch_accumulation = []
+                    batch_indices = []
+
+                    # A desperate attempt to claw back any VRAM
+                    del batch, sequences, batch_embeddings, pooled_batch_embeddings
+                    gc.collect()
+                    torch.cuda.empty_cache()
+
+                print(f"Fetched embedding {batch_index + 1} out of {len(dataloader)}")
+
+        pattern = re.compile(r"checkpointed_embeddings_(\d+)-(\d+)\.pkl")
+
+        for fname in sorted(os.listdir(checkpoint_dir)):
+
+            match = pattern.match(fname)
+
+            if match:
+
+                start_batch, end_batch = map(int, match.groups())
+
+                with open(os.path.join(checkpoint_dir, fname), "rb") as f:
+
+                    batch_list = pickle.load(f)
+
+                for rel_batch_idx, pooled in enumerate(batch_list):
+
+                    batch_abs_idx = start_batch + rel_batch_idx
+                    start_idx = batch_abs_idx * batch_size
+
+                    # The number of sequences in this batch may be < batch_size for last batch!
+                    for seq_idx in range(pooled.shape[0]):
+
+                        full_embeddings[start_idx + seq_idx] = pooled[seq_idx]
+
+        assert all(isinstance(x, torch.Tensor) for x in full_embeddings), "Some entries in full_embeddings are not torch tensors."
+        full_embeddings = cast(list[torch.Tensor], full_embeddings)
+
+        return full_embeddings
 
 def post_process_embeddings(
-    dataset_dicts: list[dict],
-    normalise_embeddings: bool,
+    unique_datasets_dict: dict,
+    normalise_embeddings_flag: bool,
     wildtype_concat: bool,
     wildtype_delta: bool,
     dimensional_reduction_method: str,
     n_desired_dimensions: int
     ):
-    
-    for index, dataset_dict in enumerate(dataset_dicts):
-        
-        dataset = dataset_dict["dataset"]
-        
-        if normalise_embeddings:
 
-            dataset.sequence_embeddings = normalise_embeddings(dataset.sequence_embeddings)
-        
+    for dataset_name, dataset in unique_datasets_dict.items():
+
+        if normalise_embeddings_flag:
+
+            embeddings = normalise_embeddings(dataset)
+
         if wildtype_concat:
-            
-            dataset = concat_wildtype_embeddings(dataset)
-        
-        elif wildtype_delta:
-            
-            dataset = find_wildtype_delta(dataset)
-        
-        dataset_dicts[index]["dataset"] = dataset
-    
-    if dimensional_reduction_method != "None":
-    
-        dataset_dicts = apply_dimensional_reduction(dataset_dicts, n_desired_dimensions)
-        embedding_size = n_desired_dimensions
-    
-    return dataset_dicts
 
-def fetch_batch_embeddings(sequences, model, tokeniser, device, embedding_layer):
-    
-    #print(tokeniser.vocab)
-    tokeniser.pad_token = "<|pad|>" # Only needed by ProGen models
-    inputs = tokeniser(sequences, padding = True, truncation = True, return_tensors = "pt", max_length = 1024)
+            dataset = concat_wildtype_embeddings(dataset)
+
+        elif wildtype_delta:
+
+            dataset = find_wildtype_delta(dataset)
+
+        unique_datasets_dict[dataset_name] = dataset
+
+    return unique_datasets_dict
+
+def get_context_length(model):
+
+    # Fetch the context length, if we can find it
+    if hasattr(model.config, "max_position_embeddings"):
+
+        context_length = model.config.max_position_embeddings
+
+    elif hasattr(model.config, "n_ctx"):
+
+        context_length = model.config.n_ctx
+
+    elif hasattr(model.config, "n_positions"):
+
+        context_length = model.config.n_positions
+
+    elif hasattr(model.config, "model_max_length"):
+
+        context_length = model.config.model_max_length
+
+    else:
+
+        raise ValueError(f"Context length attribute not found in model config for {type(model).__name__}.")
+
+    return context_length
+
+def fetch_batch_embeddings(
+    sequences,
+    model,
+    tokeniser,
+    special_tokens_in_context_flag: bool,
+    special_tokens_in_pool_flag: bool,
+    additive_attention_flag: bool,
+    attention_bias_allignment_flag: bool,
+    add_masked_structure_flag: bool,
+    device: torch.device,
+    embedding_layer: int,
+    context_length: int,
+    amino_acids: str
+    ):
+
+    is_split_into_words_flag = False
+
+    if add_masked_structure_flag:
+
+        # Some models require a structural context for each token, here we add "#" meaning an unknown structural context for each residue
+        # Since tokens are therefore more than one character, we also then split by word rather than character
+        sequences = [[residue + "#" for residue in sequence] for sequence in sequences]
+        is_split_into_words_flag = True
+
+    if not attention_bias_allignment_flag:
+
+        inputs = tokeniser(sequences, is_split_into_words = is_split_into_words_flag, padding = True, truncation = False, return_tensors = "pt")
+
+    else:
+
+        # If attention_bias_allignment_mask, requires padding batches to be divisible by 8
+        max_sequence_length_in_batch = max([len(sequence) for sequence in sequences])
+        max_length_plus_special_tokens = max_sequence_length_in_batch + 2
+        minimum_divisibile_context_length = max_length_plus_special_tokens + 8 if max_length_plus_special_tokens % 8 == 0 else max_length_plus_special_tokens + (8 - max_length_plus_special_tokens % 8)
+        # There must always be padding, so even if exactly diviisble by 8, we add 8.
+        inputs = tokeniser(sequences, is_split_into_words = is_split_into_words_flag, padding = "max_length", truncation = False, return_tensors = "pt", max_length = minimum_divisibile_context_length)
+
     input_ids = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)
-    model = model.to(device)
-    output = model(input_ids, attention_mask = attention_mask, output_hidden_states = True)
-    batch_embeddings = output.hidden_states[embedding_layer]
-    
-    return batch_embeddings
+    modified_attention_mask, special_token_mask = modify_special_token_attention(
+        input_ids,
+        attention_mask,
+        tokeniser,
+        amino_acids,
+        special_tokens_in_context_flag,
+        add_masked_structure_flag,
+        device
+        )
+
+    stride = context_length // 2    # This seems the most popular method in the literature to save compute over doing stride length == 1
+
+    # Create pool mask of which positions should be included in pooling
+    # We make sure to use the unmodified attention mask, to keep the logic for the 2 flags separate
+    if special_tokens_in_pool_flag:
+
+        pool_mask = attention_mask.bool()
+
+    else:
+
+        # Pool mask only true where pool mask True and special mask false
+        pool_mask = attention_mask.bool() & (~special_token_mask.bool())
+
+    # Check if we need to use sliding window method, or can use faster method
+    if input_ids.shape[1] < context_length:
+
+        if additive_attention_flag:
+
+            modified_attention_mask = torch.where(
+                modified_attention_mask.bool(),
+                torch.tensor(0.0, dtype = torch.float16, device = device),
+                torch.tensor(float("-inf"), dtype = torch.float16, device = device)
+            )
+
+
+        output = model(input_ids, attention_mask = modified_attention_mask, output_hidden_states = True)
+        batch_embeddings = output.hidden_states[embedding_layer]
+        batch_embeddings = batch_embeddings * pool_mask.unsqueeze(-1)
+
+        return batch_embeddings.detach().cpu(), pool_mask.detach().cpu()
+
+    else:
+
+        # Set up windows
+        windows = []
+        window_start = 0
+
+        if additive_attention_flag:
+
+            window_length = context_length - 8
+
+        else:
+
+            window_length = context_length
+
+        while window_start + window_length < input_ids.shape[1]:
+
+            window_end = window_start + window_length
+            windows.append((window_start, window_end))
+            window_start += stride
+
+        last_window_start = max(0, input_ids.shape[1] - window_length)
+        last_window = (last_window_start, input_ids.shape[1])
+
+        if not windows or windows[-1][0] != last_window[0]:
+
+            windows.append(last_window)
+
+        position_to_embeddings = [defaultdict(list) for _position in range(input_ids.shape[0])]  # Stores arbitray number of embeddings for each position
+
+        # Iterate through windows
+        for window_start, window_end in windows:
+
+            print(f"Fetching embeddings for window {window_start} - {window_end}.")
+            window_input_ids = input_ids[:, window_start:window_end]
+            window_attention_mask = modified_attention_mask[:, window_start:window_end]
+            window_pool_mask = pool_mask[:, window_start:window_end]
+
+            if additive_attention_flag:
+
+                prepped_window_attention_mask = torch.where(
+                    window_attention_mask.bool(),
+                    torch.tensor(0.0, dtype = torch.float16, device = device),
+                    torch.tensor(float("-inf"), dtype = torch.float16, device = device)
+                )
+
+                if window_end < input_ids.shape[1]:
+
+                   window_input_ids = append_eight_pad_tokens(tokeniser, window_input_ids)
+                   prepped_window_attention_mask = append_eight_masked_out_elements(prepped_window_attention_mask)
+                   window_pool_mask = append_eight_pool_mask(window_pool_mask)
+
+                else:
+
+                    window_input_ids = prepend_eight_pad_tokens(tokeniser, window_input_ids)
+                    prepped_window_attention_mask = prepend_eight_masked_out_elements(prepped_window_attention_mask)
+                    window_pool_mask = prepend_eight_pool_mask(window_pool_mask)
+
+            else:
+
+                prepped_window_attention_mask = window_attention_mask
+
+            output = model(window_input_ids, attention_mask = prepped_window_attention_mask, output_hidden_states = True)
+            batch_window_embeddings = output.hidden_states[embedding_layer]
+            batch_window_embeddings = batch_window_embeddings * window_pool_mask.unsqueeze(-1)
+
+            # Set embeddings of sequences that have no valid tokens in this window to zero
+            valid_seq_mask = window_attention_mask.sum(dim = 1) > 0
+
+            for batch_index, is_valid in enumerate(valid_seq_mask):
+
+                if not is_valid:
+
+                    batch_window_embeddings[batch_index] = 0  # zero all embeddings for this seq in this window
+
+            # Line up the results from each window with the correct positions
+            for batch_index in range(input_ids.shape[0]):
+
+                for window_position in range(window_end - window_start):
+
+                    sequence_position = window_start + window_position
+                    position_to_embeddings[batch_index][sequence_position].append(batch_window_embeddings[batch_index, window_position].detach().cpu())
+
+            # Deciding whether to keep this, it really slows things down, but sometimes necessary for very large models + long sequences
+            #del window_input_ids, window_attention_mask, output, batch_window_embeddings, window_pool_mask, valid_seq_mask
+            #gc.collect()
+            #torch.cuda.empty_cache()
+
+        embedding_dimension = list(position_to_embeddings[0].values())[0][0].shape[0]
+        batch_embeddings = []
+
+        for batch_index in range(input_ids.shape[0]):
+
+            position_embeddings = torch.zeros((input_ids.shape[1], embedding_dimension))
+
+            for position in range(input_ids.shape[1]):
+
+                embeddings_list = position_to_embeddings[batch_index].get(position, [])
+
+                if embeddings_list != []:
+
+                    mean_embedding_for_position = torch.stack(embeddings_list, dim = 0).mean(dim = 0)
+                    position_embeddings[position, :] = mean_embedding_for_position
+
+            batch_embeddings.append(position_embeddings)
+
+        batch_embeddings = torch.stack(batch_embeddings)
+
+        return batch_embeddings.detach().cpu(), pool_mask.detach().cpu()
+
+def modify_special_token_attention(
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    tokeniser,
+    amino_acids: str,
+    special_tokens_in_context_flag: bool,
+    add_masked_structure_flag: bool,
+    device: torch.device
+    ):
+
+    # Build set of valid amino acid and pad token IDs
+    vocab = tokeniser.get_vocab()
+
+    if add_masked_structure_flag:
+
+        amino_acids = [res + "#" for res in amino_acids]
+
+    aa_token_ids = set(vocab[res] for res in amino_acids if res in vocab)
+    aa_token_ids.add(vocab[tokeniser.pad_token])    # Should be set from previously padding
+    special_token_mask = torch.tensor(
+        [[id not in aa_token_ids for id in ids] for ids in input_ids.tolist()],
+        dtype = torch.bool,
+        device = device
+        )
+
+    if special_tokens_in_context_flag:
+
+        # Inlcude everything as-is
+        return attention_mask, special_token_mask
+
+    else:
+
+        # Zero attention for special tokens
+        modified_attention_mask = attention_mask.clone()
+        modified_attention_mask[special_token_mask] = 0
+
+        # Return unmodified input_ids and special_token_masks
+        return modified_attention_mask, special_token_mask
+
+def append_eight_pad_tokens(tokeniser, tensor):
+
+    pad = torch.full((tensor.shape[0], 8), tokeniser.pad_token_id, device = tensor.device, dtype = tensor.dtype)
+
+    return torch.cat([tensor, pad], dim = 1)
+
+def prepend_eight_pad_tokens(tokeniser, tensor):
+
+    pad = torch.full((tensor.shape[0], 8), tokeniser.pad_token_id, device = tensor.device, dtype = tensor.dtype)
+
+    return torch.cat([pad, tensor], dim = 1)
+
+def append_eight_masked_out_elements(mask_tensor):
+
+    pad = torch.full((mask_tensor.shape[0], 8), float("-inf"), device = mask_tensor.device, dtype = mask_tensor.dtype)
+
+    return torch.cat([mask_tensor, pad], dim = 1)
+
+def prepend_eight_masked_out_elements(mask_tensor,):
+
+    pad = torch.full((mask_tensor.shape[0], 8), float("-inf"), device = mask_tensor.device, dtype = mask_tensor.dtype)
+    return torch.cat([pad, mask_tensor], dim = 1)
+
+def append_eight_pool_mask(pool_mask):
+
+    pad = torch.zeros((pool_mask.shape[0], 8), dtype = torch.bool, device = pool_mask.device)
+
+    return torch.cat([pool_mask, pad], dim = 1)
+
+def prepend_eight_pool_mask(pool_mask):
+
+    pad = torch.zeros((pool_mask.shape[0], 8), dtype = torch.bool, device = pool_mask.device)
+
+    return torch.cat([pad, pool_mask], dim = 1)
 
 def concatenate_embeddings(embeddings_list: list) -> list:
 
@@ -426,7 +953,7 @@ def normalise_tensor(tensor):
 
     return torch.tensor(normalised_vector)
 
-def fit_principal_components(embeddings, component_index: int, device: str = "cpu"):
+def fit_principal_components(embeddings, component_index: int, device: torch.device):
 
     assert embeddings.dim() == 3, "Input embeddings must be a 3D tensor such that each slice is a point."
 
@@ -464,41 +991,47 @@ def fit_principal_components(embeddings, component_index: int, device: str = "cp
     return principal_components
 
 def concat_wildtype_embeddings(dataset):
-    
+
     domain_to_wt = {}
-    new_embeddingss = []
-    
+    new_embeddings = []
+
+    # First loop collects WT embeddings
     for index, domain in enumerate(dataset.domain_names):
-        
+
         if dataset.wt_flags[index]:
-            
-            domain_to_wt[domain] = dataset.sequence_embeddings[index]
-    
+
+            sequence_embedding = dataset.sequence_embeddings[index]
+            domain_to_wt[domain] = sequence_embedding
+
+    # Second loop matches them with mutants
     for index, domain in enumerate(dataset.domain_names):
-        
-        concatinated_embedding = torch.cat((dataset.sequence_embeddings[index], domain_to_wt.get(domain)), dim = 0)
+
+        sequence_embedding = dataset.sequence_embeddings[index]
+        wildtype_embedding = domain_to_wt.get(domain)
+        assert isinstance(wildtype_embedding, torch.Tensor), f"Expected wildtype embedding to be Tensor, got {type(wildtype_embedding)}"
+        concatinated_embedding = torch.cat((sequence_embedding, wildtype_embedding), dim = 0)
         new_embeddings.append(concatinated_embedding)
-    
+
     dataset.sequence_embeddings = new_embeddings
-    
+
     return dataset
 
 def find_wildtype_delta(dataset):
-    
+
     domain_to_wt = {}
     new_embeddings = []
-    
+
     for index, domain in enumerate(dataset.domain_names):
-        
+
         if dataset.wt_flags[index]:
-            
+
             domain_to_wt[domain] = dataset.sequence_embeddings[index]
-    
+
     for index, domain in enumerate(dataset.domain_names):
-        
+
         delta_embedding = dataset.sequence_embeddings[index] - domain_to_wt.get(domain)
         new_embeddings.append(delta_embedding)
-    
+
     dataset.sequence_embeddings = new_embeddings
-    
+
     return dataset
