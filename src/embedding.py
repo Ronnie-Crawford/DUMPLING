@@ -183,6 +183,13 @@ def load_embeddings(
             print(f"Loaded embeddings for [{dataset_name}] - [{model_selection}] - [{embedding_layer}] - [{embedding_type}]")
 
         unique_embeddings[dataset_name] = embeddings_list
+        # print("------------------------- DEBUG -------------------------------")
+        # print(f"For dataset: {dataset_name}, Nans found:")
+        # print([torch.isnan(embedding).sum().item() for embedding in embeddings_list[0]])
+        # print(f"For dataset: {dataset_name}, Infs found:")
+        # print([torch.isinf(embedding).sum().item() for embedding in embeddings_list[0]])
+
+    #raise Error("stop")
 
     for dataset_name, dataset in unique_datasets_dict.items():
 
@@ -246,8 +253,6 @@ def setup_model(model_selection: str, device: torch.device):
 
         case "AMPLIFY_350M":
 
-            # Currently broken, will find a fix
-            raise NotImplementedError("Doesn't quite work yet.")
             tokeniser = AutoTokenizer.from_pretrained("chandar-lab/AMPLIFY_350M", trust_remote_code = True)
             tokeniser = process_tokeniser(tokeniser)
             model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_350M", trust_remote_code = True)
@@ -500,7 +505,20 @@ def fetch_embeddings(
 
                 if embedding_type == "MEAN":
 
-                    sum_embeddings = batch_embeddings.sum(dim = 1)
+                    for sequence_embedding in batch_embeddings:
+
+                        for position_embedding in sequence_embedding:
+
+                            if torch.isinf(position_embedding).any().item():
+
+                                print(position_embedding)
+
+                    sum_embeddings = batch_embeddings.sum(dim = 1, dtype=torch.float32) # Convert back to float32 to avoid numeric overflow
+
+                    if torch.isinf(sum_embeddings).any():
+
+                        raise ValueError("Summed embeddings contain inf value, possibly due to numeric overflow.")
+
                     counts = pool_mask.sum(dim = 1).clamp(min = 1).unsqueeze(-1)
                     pooled_batch_embeddings = sum_embeddings / counts
 
@@ -725,6 +743,15 @@ def fetch_batch_embeddings(
         output = model(input_ids, attention_mask = modified_attention_mask, output_hidden_states = True)
         batch_embeddings = output.hidden_states[embedding_layer]
         batch_embeddings = batch_embeddings * pool_mask.unsqueeze(-1)
+
+        for sequence_embedding in batch_embeddings:
+
+            for position_embedding in sequence_embedding:
+
+                if torch.isinf(position_embedding).any().item():
+
+                    print("New Embedding")
+                    print(position_embedding)
 
         return batch_embeddings.detach().cpu(), pool_mask.detach().cpu()
 

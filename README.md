@@ -1,4 +1,5 @@
-# Protein Domain Stability Predictor
+# DUMPLING
+### Delta of Unseen Mutant Protein Language embeddings for INdel effect Generation
 
 This is a variant effect predictor which attempts to predict the fitness, or other feature, of a variant protein relative to the wildtype protein. It only requires the wildtype and mutant sequence.
 

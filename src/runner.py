@@ -24,6 +24,7 @@ from visuals import plot_predictions_vs_true
 AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
 MAX_FILENAME_LENGTH = 255
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def train_and_test(config, results_path_override = None):
 
