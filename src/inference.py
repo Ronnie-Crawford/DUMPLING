@@ -15,7 +15,6 @@ def handle_inference(
     trained_model,
     criterion_dict,
     batch_size: int,
-    test_subset_to_sequence_dict,
     device,
     results_path,
     ) -> pd.DataFrame:
@@ -30,7 +29,7 @@ def handle_inference(
 
             raise ValueError(f"Unknown model_selection: {downstream_models[0]}")
 
-    save_results(predictions_df, test_subset_to_sequence_dict, results_path)
+    predictions_df = save_results(predictions_df, results_path)
 
     return predictions_df
 
@@ -51,6 +50,7 @@ def run_inference_on_ffnn(
     truths_dict = {feature: [] for feature in output_features}
 
     domains = []
+    subsets = []
     sequences = []
 
     with torch.no_grad():
@@ -96,6 +96,7 @@ def run_inference_on_ffnn(
 
             # Collect batch metadata
             domains.extend(batch["domain_name"])
+            subsets.extend(batch["subset"])
             sequences.extend(batch["aa_seq"])
 
     # Average loss
@@ -104,7 +105,8 @@ def run_inference_on_ffnn(
     # Concatenate results from all batches
     final_results: dict = {
         "domain": domains,
-        "sequences": sequences
+        "subset": subsets,
+        "sequence": sequences
     }
 
     for feature in output_features:
@@ -119,7 +121,7 @@ def run_inference_on_ffnn(
 
     return average_test_loss, results_df
 
-def save_results(results_df, test_subset_to_sequence_dict, results_path):
+def save_results(results_df, results_path):
 
     pair = results_path.name
     # strip off the leading "trained_on_"
@@ -144,17 +146,19 @@ def save_results(results_df, test_subset_to_sequence_dict, results_path):
         results_file.writelines(header_lines)
 
     # Map results to subsets
-    subset_rows = []
+    # subset_rows = []
 
-    for subset_name, sequence_list in test_subset_to_sequence_dict.items():
+    # for subset_name, sequence_list in test_subset_to_sequence_dict.items():
 
-        for sequence in sequence_list:
+    #     for sequence in sequence_list:
 
-            subset_rows.append({"sequences": sequence, "subset": subset_name})
+    #         subset_rows.append({"sequences": sequence, "subset": subset_name})
 
-    subset_rows_df = pd.DataFrame(subset_rows)
-    subset_df = cast(pd.DataFrame, subset_rows_df.drop_duplicates(subset = ["sequences", "subset"]))
-    results_df = pd.merge(results_df, subset_df, on = "sequences", how = "left")
+    # subset_rows_df = pd.DataFrame(subset_rows)
+    # subset_df = cast(pd.DataFrame, subset_rows_df.drop_duplicates(subset = ["sequences", "subset"]))
+    # results_df = pd.merge(results_df, subset_df, on = "sequences", how = "left")
 
     # Data
     results_df.to_csv(results_path / "results.csv", mode = "a", index = False)
+
+    return results_df

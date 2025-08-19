@@ -93,7 +93,7 @@ def handle_splits(
 
     # Save training sequences (depreciated)
     #save_training_sequences(results_path, datasets_split_indices, dataset_dicts)
-    test_subset_to_sequence_dict = create_subset_to_sequence_dict(split_datasets["TEST"])
+    #test_subset_to_sequence_dict = create_subset_to_sequence_dict(split_datasets["TEST"])
 
     final_splits = {
         split: ConcatDataset(split_datasets[split].values())
@@ -111,7 +111,7 @@ def handle_splits(
     # Load into dataloaders
     dataloaders_dict = splits_to_loaders(final_splits, batch_size, n_workers, train_sampler)
 
-    return dataloaders_dict, test_subset_to_sequence_dict
+    return dataloaders_dict
 
 def read_homology_file(homology_file: str) -> dict:
 
@@ -610,12 +610,14 @@ def collate_fn(batch):
 
     # Extract data to keep and batch it
     domains = [item["domain_name"] for item in batch]
+    subsets = [item["subset"] for item in batch]
     aa_seqs = [item["aa_seq"] for item in batch]
     sequence_embeddings = torch.stack([item["sequence_embedding"] for item in batch], dim = 0)
 
     # Collect other batch elements
     batch_dict = {
         "domain_name": domains,
+        "subset": subsets,
         "aa_seq": aa_seqs,
         "sequence_embedding": sequence_embeddings
     }

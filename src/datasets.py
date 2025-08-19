@@ -23,6 +23,7 @@ class ProteinDataset(Dataset):
     def __init__(
         self,
         domain_names: list,
+        subsets: list,
         wt_flags: list,
         aa_seqs: list,
         sequence_embeddings: list,
@@ -34,6 +35,7 @@ class ProteinDataset(Dataset):
         ):
 
         self.domain_names = domain_names
+        self.subsets = subsets
         self.wt_flags = wt_flags
         self.aa_seqs = aa_seqs
         self.sequence_embeddings = sequence_embeddings
@@ -51,6 +53,7 @@ class ProteinDataset(Dataset):
 
         item = {
             "domain_name": self.domain_names[index],
+            "subset": self.subsets[index],
             "wt_flag": self.wt_flags[index],
             "aa_seq": self.aa_seqs[index].replace("*", "<unk>"),
             "sequence_embedding": self.sequence_embeddings[index]
@@ -146,10 +149,12 @@ class ProteinDataset(Dataset):
                 labels[label].append(bool(strtobool(row[column_name].strip())) if column_name else False)
 
         # Initialise zero embeddings in one group for efficiency - zero tensor is placeholder for later
+        subsets = [None] * len(domain_names)
         sequence_embeddings = [torch.zeros(0) for _ in domain_names]
 
         return cls(
             domain_names,
+            subsets,
             wt_flags,
             aa_seqs,
             sequence_embeddings,
@@ -168,6 +173,7 @@ class ProteinDataset(Dataset):
 
         kwargs = {
             "domain_names": [self.domain_names[i] for i in indices],
+            "subsets": [self.subsets[i] for i in indices],
             "wt_flags": [self.wt_flags[i] for i in indices],
             "aa_seqs": [self.aa_seqs[i] for i in indices],
             "sequence_embeddings": [self.sequence_embeddings[i] for i in indices],
@@ -188,6 +194,7 @@ class ProteinDataset(Dataset):
 
         kwargs = {
             "domain_names": [self.domain_names[i] for i in indices],
+            "subsets": [self.subsets[i] for i in indices],
             "wt_flags": [self.wt_flags[i] for i in indices],
             "aa_seqs": [self.aa_seqs[i] for i in indices],
             "sequence_embeddings": [self.sequence_embeddings[i].clone() for i in indices],
@@ -456,6 +463,7 @@ def make_spoof_train_dataset(
 
     # Generate dummy attributes
     domain_names = ["" for _ in range(len(train_sequence_list))]
+    subsets = ["spoof"] * len(train_sequence_list)
     wt_flags = [False] * len(train_sequence_list)
     sequence_embeddings = [torch.zeros(0) for _ in range(len(train_sequence_list))]
     feature_values = {feature: [0.0] * len(train_sequence_list) for feature in predicted_features}
@@ -465,6 +473,7 @@ def make_spoof_train_dataset(
 
     return ProteinDataset(
         domain_names,
+        subsets,
         wt_flags,
         train_sequence_list,
         sequence_embeddings,
@@ -490,6 +499,8 @@ def handle_filtering(unique_datasets_dict: dict, subsets_in_use: list[tuple]):
 
         if label == "ALL":
 
+            original_dataset.subsets = [f"{dataset_name}-{label}"] * len(original_dataset)
+
             dataset_dicts.append({
                 "dataset_name": dataset_name,
                 "dataset": original_dataset,
@@ -500,6 +511,7 @@ def handle_filtering(unique_datasets_dict: dict, subsets_in_use: list[tuple]):
         else:
 
             new_dataset = original_dataset.filter_by_label(label)
+            new_dataset.subsets = [f"{dataset_name}-{label}"] * len(new_dataset)
 
             dataset_dicts.append({
                 "dataset_name": dataset_name,
