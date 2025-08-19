@@ -183,13 +183,6 @@ def load_embeddings(
             print(f"Loaded embeddings for [{dataset_name}] - [{model_selection}] - [{embedding_layer}] - [{embedding_type}]")
 
         unique_embeddings[dataset_name] = embeddings_list
-        # print("------------------------- DEBUG -------------------------------")
-        # print(f"For dataset: {dataset_name}, Nans found:")
-        # print([torch.isnan(embedding).sum().item() for embedding in embeddings_list[0]])
-        # print(f"For dataset: {dataset_name}, Infs found:")
-        # print([torch.isinf(embedding).sum().item() for embedding in embeddings_list[0]])
-
-    #raise Error("stop")
 
     for dataset_name, dataset in unique_datasets_dict.items():
 
@@ -264,8 +257,6 @@ def setup_model(model_selection: str, device: torch.device):
 
         case "AMPLIFY_350M_base":
 
-            # Currently broken, will find a fix
-            raise NotImplementedError("Doesn't quite work yet.")
             tokeniser = AutoTokenizer.from_pretrained("chandar-lab/AMPLIFY_350M_base", trust_remote_code = True)
             tokeniser = process_tokeniser(tokeniser)
             model = AutoModel.from_pretrained("chandar-lab/AMPLIFY_350M_base", trust_remote_code = True)
@@ -435,24 +426,26 @@ def fetch_embeddings(
     embedding_type: str,
     embedding_layer: int,
     n_workers: int,
-    checkpoint_dir: Path,
+    partial_embeddings_folder: Path,
     amino_acids: str
     ) -> list[torch.Tensor]:
 
-        # Make sure checkpoint dir exists
-        os.makedirs(checkpoint_dir, exist_ok = True)
+        # Make sure partial embeddings directory exists
+        os.makedirs(partial_embeddings_folder, exist_ok = True)
         # Scan for already saved temp files
-        completed_batches = set()
+        completed_sequences = set()
         pattern = re.compile(r"checkpointed_embeddings_(\d+)-(\d+)\.pkl")
 
-        for fname in os.listdir(checkpoint_dir):
+        for fname in os.listdir(partial_embeddings_folder):
 
             match = pattern.match(fname)
 
             if match:
 
-                start_batch, end_batch = map(int, match.groups())
-                completed_batches.update(range(start_batch, end_batch + 1))
+                start_sequence_index, end_sequence_index = map(int, match.groups())
+                completed_sequences.update(range(start_sequence_index, end_sequence_index + 1))
+
+        last_completed_sequence_index = max(completed_sequences) if completed_sequences else -1 # -1 here is a placeholder when there are no compeleted indicies
 
         full_embeddings = [None] * len(dataset)
         dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers, persistent_workers = True)
@@ -472,7 +465,11 @@ def fetch_embeddings(
 
             for batch_index, batch in enumerate(dataloader):
 
-                if batch_index in completed_batches:
+                # Sequences are saved in groups of batches but batch size might change between incomplete runs,
+                # so we check the last sequence in the batch, and otherwise recalculate the whole batch
+                sequence_index = (batch_index + 1) * batch_size - 1
+
+                if sequence_index in completed_sequences:
 
                     continue
 
@@ -563,13 +560,22 @@ def fetch_embeddings(
                     raise Exception("Invalid embedding type.")
 
                 # Store in memory until time to save
-                batch_accumulation.append(pooled_batch_embeddings)
+                batch_accumulation.extend(pooled_batch_embeddings)
                 batch_indices.append(batch_index)
+
+                low_sequence_index_to_save = min(batch_indices) * batch_size
+                high_sequence_index_to_save = (max(batch_indices) + 1) * batch_size - 1
+
+                if last_completed_sequence_index >= low_sequence_index_to_save:
+
+                    offset = last_completed_sequence_index - low_sequence_index_to_save + 1  # +1 because last_completed included
+                    low_sequence_index_to_save = last_completed_sequence_index + 1
+                    batch_accumulation = batch_accumulation[offset:]
 
                 # Save every X batches
                 if (batch_index + 1) % 100 == 0 or (batch_index + 1) == len(dataloader):
 
-                    temp_fname = os.path.join(checkpoint_dir, f"checkpointed_embeddings_{batch_indices[0]}-{batch_indices[-1]}.pkl")
+                    temp_fname = os.path.join(partial_embeddings_folder, f"checkpointed_embeddings_{low_sequence_index_to_save}-{high_sequence_index_to_save}.pkl")
 
                     with open(temp_fname, "wb") as f:
 
@@ -578,36 +584,32 @@ def fetch_embeddings(
                     batch_accumulation = []
                     batch_indices = []
 
-                    # A desperate attempt to claw back any VRAM
+                    # A desperate attempt to claw back any VRAM and RAM
                     del batch, sequences, batch_embeddings, pooled_batch_embeddings
                     gc.collect()
                     torch.cuda.empty_cache()
 
                 print(f"Fetched embedding {batch_index + 1} out of {len(dataloader)}")
 
+        # Once all partial embeddings are saved, we need to load them all into one object
         pattern = re.compile(r"checkpointed_embeddings_(\d+)-(\d+)\.pkl")
 
-        for fname in sorted(os.listdir(checkpoint_dir)):
+        for fname in sorted(os.listdir(partial_embeddings_folder)):
 
             match = pattern.match(fname)
 
             if match:
 
-                start_batch, end_batch = map(int, match.groups())
+                start_sequence_index, end_sequence_index = map(int, match.groups())
 
-                with open(os.path.join(checkpoint_dir, fname), "rb") as f:
+                with open(os.path.join(partial_embeddings_folder, fname), "rb") as f:
 
-                    batch_list = pickle.load(f)
+                    partial_embeddings_list = pickle.load(f)
 
-                for rel_batch_idx, pooled in enumerate(batch_list):
+                for sequence_offset, pooled_embedding in enumerate(partial_embeddings_list):
 
-                    batch_abs_idx = start_batch + rel_batch_idx
-                    start_idx = batch_abs_idx * batch_size
-
-                    # The number of sequences in this batch may be < batch_size for last batch!
-                    for seq_idx in range(pooled.shape[0]):
-
-                        full_embeddings[start_idx + seq_idx] = pooled[seq_idx]
+                    global_sequence_index = start_sequence_index + sequence_offset
+                    full_embeddings[global_sequence_index] = pooled_embedding
 
         assert all(isinstance(x, torch.Tensor) for x in full_embeddings), "Some entries in full_embeddings are not torch tensors."
         full_embeddings = cast(list[torch.Tensor], full_embeddings)
@@ -838,9 +840,9 @@ def fetch_batch_embeddings(
                     position_to_embeddings[batch_index][sequence_position].append(batch_window_embeddings[batch_index, window_position].detach().cpu())
 
             # Deciding whether to keep this, it really slows things down, but sometimes necessary for very large models + long sequences
-            #del window_input_ids, window_attention_mask, output, batch_window_embeddings, window_pool_mask, valid_seq_mask
-            #gc.collect()
-            #torch.cuda.empty_cache()
+            del window_input_ids, window_attention_mask, output, batch_window_embeddings, window_pool_mask, valid_seq_mask
+            gc.collect()
+            torch.cuda.empty_cache()
 
         embedding_dimension = list(position_to_embeddings[0].values())[0][0].shape[0]
         batch_embeddings = []
