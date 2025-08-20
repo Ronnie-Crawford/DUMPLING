@@ -219,6 +219,10 @@ def setup_model(model_selection: str, device: torch.device):
     This feels like a hacky way to fetch the models but I can't think of a more pythonic way that doesn't break.
     """
     context_length = None
+    additive_attention_flag = False
+    attention_bias_allignment_mask = False
+    add_masked_structure_flag = False
+    add_spoof_structural_input_ids_flag = False
 
     match model_selection:
 
@@ -230,7 +234,6 @@ def setup_model(model_selection: str, device: torch.device):
             model = model.half()    # Xformers module which AMPLIFY uses requires half-precision
             additive_attention_flag = True
             attention_bias_allignment_mask = True
-            add_masked_structure_flag = False
             context_length = 2048
 
         case "AMPLIFY_120M_base":
@@ -241,7 +244,6 @@ def setup_model(model_selection: str, device: torch.device):
             model = model.half()    # Xformers module which AMPLIFY uses requires half-precision
             additive_attention_flag = True
             attention_bias_allignment_mask = True
-            add_masked_structure_flag = False
             context_length = 2048
 
         case "AMPLIFY_350M":
@@ -252,7 +254,6 @@ def setup_model(model_selection: str, device: torch.device):
             model = model.half()    # Xformers module which AMPLIFY uses requires half-precision
             additive_attention_flag = True
             attention_bias_allignment_mask = True
-            add_masked_structure_flag = False
             context_length = 2048
 
         case "AMPLIFY_350M_base":
@@ -263,7 +264,6 @@ def setup_model(model_selection: str, device: torch.device):
             model = model.half()    # Xformers module which AMPLIFY uses requires half-precision
             additive_attention_flag = True
             attention_bias_allignment_mask = True
-            add_masked_structure_flag = False
             context_length = 2048
 
         case "ESMFold":
@@ -273,107 +273,82 @@ def setup_model(model_selection: str, device: torch.device):
             tokeniser = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
             tokeniser = process_tokeniser(tokeniser)
             model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", output_hidden_states = True)
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "ESM2_T6_8M_UR50D":
 
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t6_8M_UR50D")
             tokeniser = process_tokeniser(tokeniser)
             model = EsmModel.from_pretrained("facebook/esm2_t6_8M_UR50D")
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "ESM2_T12_35M_UR50D":
 
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t12_35M_UR50D")
             tokeniser = process_tokeniser(tokeniser)
             model = EsmModel.from_pretrained("facebook/esm2_t12_35M_UR50D")
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "ESM2_T30_150M_UR50D":
 
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t30_150M_UR50D")
             tokeniser = process_tokeniser(tokeniser)
             model = EsmModel.from_pretrained("facebook/esm2_t30_150M_UR50D")
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "ESM2_T33_650M_UR50D":
 
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t33_650M_UR50D")
             tokeniser = process_tokeniser(tokeniser)
             model = EsmModel.from_pretrained("facebook/esm2_t33_650M_UR50D")
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "ESM2_T36_3B_UR50D":
 
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t36_3B_UR50D")
             tokeniser = process_tokeniser(tokeniser)
             model = EsmModel.from_pretrained("facebook/esm2_t36_3B_UR50D")
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "ESM2_T48_15B_UR50D":
 
             tokeniser = AutoTokenizer.from_pretrained("facebook/esm2_t48_15B_UR50D")
             tokeniser = process_tokeniser(tokeniser)
             model = EsmModel.from_pretrained("facebook/esm2_t48_15B_UR50D")
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "PROGEN_2_SMALL":
 
             tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-small", trust_remote_code = True)
             tokeniser = process_tokeniser(tokeniser)
             model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-small", trust_remote_code = True)
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "PROGEN_2_MEDIUM":
 
             tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-medium", trust_remote_code = True)
             tokeniser = process_tokeniser(tokeniser)
             model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-medium", trust_remote_code = True)
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
 
         case "PROGEN_2_LARGE":
 
             tokeniser = AutoTokenizer.from_pretrained("hugohrban/progen2-large", trust_remote_code = True)
             tokeniser = process_tokeniser(tokeniser)
             model = AutoModelForCausalLM.from_pretrained("hugohrban/progen2-large", trust_remote_code = True)
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
+
+        case "PROSST_128":
+
+            tokeniser = AutoTokenizer.from_pretrained("AI4Protein/ProSST-128", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModelForMaskedLM.from_pretrained("AI4Protein/ProSST-128", trust_remote_code = True)
+            context_length = 1024
+            add_spoof_structural_input_ids_flag = True
 
         case "PROSST_2048":
 
             tokeniser = AutoTokenizer.from_pretrained("AI4Protein/ProSST-2048", trust_remote_code = True)
             tokeniser = process_tokeniser(tokeniser)
             model = AutoModelForMaskedLM.from_pretrained("AI4Protein/ProSST-2048", trust_remote_code = True)
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
-            add_masked_structure_flag = False
+            context_length = 1024
+            add_spoof_structural_input_ids_flag = True
 
         case "SAPROT_650M":
 
             tokeniser = EsmTokenizer.from_pretrained("westlake-repl/SaProt_650M_AF2")
             tokeniser = process_tokeniser(tokeniser)
             model = EsmForMaskedLM.from_pretrained("westlake-repl/SaProt_650M_AF2")
-            additive_attention_flag = False
-            attention_bias_allignment_mask = False
             add_masked_structure_flag = True
 
         case _:
@@ -395,7 +370,7 @@ def setup_model(model_selection: str, device: torch.device):
 
         raise ValueError(f"Could not retrieve embedding size, check the names of variables in model config: {model.config.keys()}")
 
-    return model, embedding_size, tokeniser, additive_attention_flag, attention_bias_allignment_mask, add_masked_structure_flag, context_length
+    return model, embedding_size, tokeniser, additive_attention_flag, attention_bias_allignment_mask, add_masked_structure_flag, add_spoof_structural_input_ids_flag, context_length
 
 def process_tokeniser(tokeniser):
 
@@ -428,7 +403,7 @@ def fetch_embeddings(
     n_workers: int,
     partial_embeddings_folder: Path,
     amino_acids: str
-    ) -> list[torch.Tensor]:
+    ) -> torch.Tensor:
 
         # Make sure partial embeddings directory exists
         os.makedirs(partial_embeddings_folder, exist_ok = True)
@@ -449,7 +424,10 @@ def fetch_embeddings(
 
         full_embeddings = [None] * len(dataset)
         dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = False, num_workers = n_workers, persistent_workers = True)
-        model, embedding_size, tokeniser, additive_attention_flag, attention_bias_allignment_mask, add_masked_structure_flag, context_length = setup_model(model_selection, device)
+        model, embedding_size, tokeniser, additive_attention_flag, attention_bias_allignment_mask, add_masked_structure_flag, add_spoof_structural_input_ids_flag, context_length = setup_model(
+            model_selection,
+            device
+            )
 
         with torch.no_grad():
 
@@ -483,6 +461,7 @@ def fetch_embeddings(
                     additive_attention_flag,
                     attention_bias_allignment_mask,
                     add_masked_structure_flag,
+                    add_spoof_structural_input_ids_flag,
                     device,
                     embedding_layer,
                     context_length,
@@ -560,7 +539,7 @@ def fetch_embeddings(
                     raise Exception("Invalid embedding type.")
 
                 # Store in memory until time to save
-                batch_accumulation.extend(pooled_batch_embeddings)
+                batch_accumulation.extend(pooled_batch_embeddings.detach().cpu())
                 batch_indices.append(batch_index)
 
                 low_sequence_index_to_save = min(batch_indices) * batch_size
@@ -576,6 +555,7 @@ def fetch_embeddings(
                 if (batch_index + 1) % 100 == 0 or (batch_index + 1) == len(dataloader):
 
                     temp_fname = os.path.join(partial_embeddings_folder, f"checkpointed_embeddings_{low_sequence_index_to_save}-{high_sequence_index_to_save}.pkl")
+                    batch_accumulation = torch.stack(batch_accumulation)
 
                     with open(temp_fname, "wb") as f:
 
@@ -613,6 +593,7 @@ def fetch_embeddings(
 
         assert all(isinstance(x, torch.Tensor) for x in full_embeddings), "Some entries in full_embeddings are not torch tensors."
         full_embeddings = cast(list[torch.Tensor], full_embeddings)
+        full_embeddings = torch.stack(full_embeddings)
 
         return full_embeddings
 
@@ -677,6 +658,7 @@ def fetch_batch_embeddings(
     additive_attention_flag: bool,
     attention_bias_allignment_flag: bool,
     add_masked_structure_flag: bool,
+    add_spoof_structural_input_ids_flag: bool,
     device: torch.device,
     embedding_layer: int,
     context_length: int,
@@ -717,8 +699,6 @@ def fetch_batch_embeddings(
         device
         )
 
-    stride = context_length // 2    # This seems the most popular method in the literature to save compute over doing stride length == 1
-
     # Create pool mask of which positions should be included in pooling
     # We make sure to use the unmodified attention mask, to keep the logic for the 2 flags separate
     if special_tokens_in_pool_flag:
@@ -741,25 +721,27 @@ def fetch_batch_embeddings(
                 torch.tensor(float("-inf"), dtype = torch.float16, device = device)
             )
 
+        # If the model requires strutural input ids, we spoof them (all padding tokens, adding no information but not disrupting)
+        if add_spoof_structural_input_ids_flag:
 
-        output = model(input_ids, attention_mask = modified_attention_mask, output_hidden_states = True)
+            # Pad token id for ProSST is 2
+            pad_token = 2
+            spoof_structure_input_ids = torch.full((1, input_ids.size(1)), pad_token, dtype = torch.long).to(device)
+            output = model(input_ids, attention_mask = modified_attention_mask, ss_input_ids = spoof_structure_input_ids, output_hidden_states = True)
+
+        else:
+
+            output = model(input_ids, attention_mask = modified_attention_mask, output_hidden_states = True)
+
         batch_embeddings = output.hidden_states[embedding_layer]
         batch_embeddings = batch_embeddings * pool_mask.unsqueeze(-1)
-
-        for sequence_embedding in batch_embeddings:
-
-            for position_embedding in sequence_embedding:
-
-                if torch.isinf(position_embedding).any().item():
-
-                    print("New Embedding")
-                    print(position_embedding)
 
         return batch_embeddings.detach().cpu(), pool_mask.detach().cpu()
 
     else:
 
         # Set up windows
+        stride = context_length // 2    # This seems the most popular method in the literature to save compute over doing stride length == 1
         windows = []
         window_start = 0
 
@@ -818,7 +800,18 @@ def fetch_batch_embeddings(
 
                 prepped_window_attention_mask = window_attention_mask
 
-            output = model(window_input_ids, attention_mask = prepped_window_attention_mask, output_hidden_states = True)
+            # If the model requires strutural input ids, we spoof them (all padding tokens, adding no information but not disrupting)
+            if add_spoof_structural_input_ids_flag:
+
+                # Pad token id for ProSST is 2
+                pad_token = 2
+                spoof_structure_input_ids = torch.full((1, window_input_ids.size(1)), pad_token, dtype = torch.long).to(device)
+                output = model(window_input_ids, attention_mask = modified_attention_mask, ss_input_ids = spoof_structure_input_ids, output_hidden_states = True)
+
+            else:
+
+                output = model(window_input_ids, attention_mask = prepped_window_attention_mask, output_hidden_states = True)
+
             batch_window_embeddings = output.hidden_states[embedding_layer]
             batch_window_embeddings = batch_window_embeddings * window_pool_mask.unsqueeze(-1)
 
