@@ -11,18 +11,15 @@ import re
 from typing import cast
 import copy
 
-from torch.nn import attention
-
-# Local modules
-from datasets import ProteinDataset
-
 # Third-party modules
 import numpy as np
 import pandas as pd
 import torch
-from torch.cuda import device
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, EsmModel, AutoModelForMaskedLM, EsmForProteinFolding, EsmTokenizer, EsmTokenizer, EsmForMaskedLM
+
+# Local modules
+from datasets import ProteinDataset
 
 def handle_embeddings(
     unique_datasets_dict: dict,
@@ -336,11 +333,35 @@ def setup_model(model_selection: str, device: torch.device):
             context_length = 1024
             add_spoof_structural_input_ids_flag = True
 
+        case "PROSST_512":
+
+            tokeniser = AutoTokenizer.from_pretrained("AI4Protein/ProSST-512", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModelForMaskedLM.from_pretrained("AI4Protein/ProSST-512", trust_remote_code = True)
+            context_length = 1024
+            add_spoof_structural_input_ids_flag = True
+
+        case "PROSST_1024":
+
+            tokeniser = AutoTokenizer.from_pretrained("AI4Protein/ProSST-1024", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModelForMaskedLM.from_pretrained("AI4Protein/ProSST-1024", trust_remote_code = True)
+            context_length = 1024
+            add_spoof_structural_input_ids_flag = True
+
         case "PROSST_2048":
 
             tokeniser = AutoTokenizer.from_pretrained("AI4Protein/ProSST-2048", trust_remote_code = True)
             tokeniser = process_tokeniser(tokeniser)
             model = AutoModelForMaskedLM.from_pretrained("AI4Protein/ProSST-2048", trust_remote_code = True)
+            context_length = 1024
+            add_spoof_structural_input_ids_flag = True
+
+        case "PROSST_4096":
+
+            tokeniser = AutoTokenizer.from_pretrained("AI4Protein/ProSST-4096", trust_remote_code = True)
+            tokeniser = process_tokeniser(tokeniser)
+            model = AutoModelForMaskedLM.from_pretrained("AI4Protein/ProSST-4096", trust_remote_code = True)
             context_length = 1024
             add_spoof_structural_input_ids_flag = True
 

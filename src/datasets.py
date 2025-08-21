@@ -149,7 +149,7 @@ class ProteinDataset(Dataset):
                 labels[label].append(bool(strtobool(row[column_name].strip())) if column_name else False)
 
         # Initialise zero embeddings in one group for efficiency - zero tensor is placeholder for later
-        subsets = [None] * len(domain_names)
+        subsets = [0] * len(domain_names)
         sequence_embeddings = [torch.zeros(0) for _ in domain_names]
 
         return cls(

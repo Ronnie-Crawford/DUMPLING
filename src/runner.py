@@ -150,8 +150,6 @@ def train_and_test(config, results_path_override = None):
         paths_dict["results"]
         )
 
-    print(predictions_df.columns)
-
     print("Metrics")
     overall_metrics, domain_specific_metrics = handle_metrics(
        config["PREDICTED_FEATURES_LIST"],

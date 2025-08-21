@@ -10,9 +10,38 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from scipy.stats import gaussian_kde
 
-def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list, results_path):
+def handle_visuals(
+    predictions_df: pd.DataFrame,
+    metrics_by_subset: dict,
+    subsets_to_use_list: list,
+    predicted_features_list: list,
+    results_path: Path
+    ):
+
+    print("Predicted features: ", predicted_features_list)
+    print("Results columns: ", predictions_df.columns)
+
+    # Plot overall correlation
+    plot_predictions_vs_true(predictions_df, predicted_features_list, results_path)
+
+    # Plot individual subset correlations
+    for dataset, label in subsets_to_use_list:
+
+        subset = f"{dataset}-{label}"
+        subset_predictions = predictions_df[predictions_df["subset"] == subset]
+        plot_predictions_vs_true(subset_predictions, predicted_features_list, results_path, subset)
+
+def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list, results_path, subset = None):
 
     for output_feature in output_features:
+
+        if subset == None:
+
+            print(f"Generating predictions vs truth plot for overall {output_feature} results.")
+
+        else:
+
+            print(f"Generating predictions vs truth plot for {subset} {output_feature} results.")
 
         truth_column = f"{output_feature}_truth"
         predicted_column = f"{output_feature}_predictions"
@@ -22,6 +51,11 @@ def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list
         keep_mask = np.isfinite(true_values) & np.isfinite(predicted_values)
         true_values = true_values[keep_mask]
         predicted_values = predicted_values[keep_mask]
+
+        if len(true_values) == 0:
+
+            print(f"No truth values for {output_feature}, skipping.")
+            continue
 
         plt.scatter(true_values, predicted_values, color = "red", label = "Predicted vs True", s = 0.1, alpha = np.clip((1000 / len(true_values)), 0, 1))
         min_val = min(true_values.min(), predicted_values.min())
@@ -41,10 +75,17 @@ def plot_predictions_vs_true(predictions_df: pd.DataFrame, output_features: list
 
         plt.xlabel(f"True {output_feature.capitalize()}")
         plt.ylabel(f"Predicted {output_feature.capitalize()}")
-        plt.title(f"Predicted vs True {output_feature.capitalize()} Values")
-        plt.legend()
 
-        plt.savefig(results_path / f"{output_feature}_accuracy_scatter.png")
+        if subset == None:
+
+            plt.title(f"Overall predicted vs true {output_feature.capitalize()} values")
+            plt.savefig(results_path / f"overall_{output_feature}_accuracy_scatter.png")
+
+        else:
+
+            plt.title(f"{subset.capitalize()} predicted vs true {output_feature.capitalize()} values")
+            plt.savefig(results_path / f"{subset}_{output_feature}_accuracy_scatter.png")
+
         plt.close()
 
 def plot_benchmark_grid(results_base_path, output_feature, minimum_valid_datapoints = 10):
