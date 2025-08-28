@@ -145,19 +145,6 @@ def save_results(results_df, results_path):
 
         results_file.writelines(header_lines)
 
-    # Map results to subsets
-    # subset_rows = []
-
-    # for subset_name, sequence_list in test_subset_to_sequence_dict.items():
-
-    #     for sequence in sequence_list:
-
-    #         subset_rows.append({"sequences": sequence, "subset": subset_name})
-
-    # subset_rows_df = pd.DataFrame(subset_rows)
-    # subset_df = cast(pd.DataFrame, subset_rows_df.drop_duplicates(subset = ["sequences", "subset"]))
-    # results_df = pd.merge(results_df, subset_df, on = "sequences", how = "left")
-
     # Data
     results_df.to_csv(results_path / "results.csv", mode = "a", index = False)
 

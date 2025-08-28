@@ -7,6 +7,7 @@ from config_loader import config
 from runner import train_and_test, train, test
 from benchmarking import all_against_all_benchmarking
 from visuals import plot_benchmark_grid
+from figures import generate_figures
 
 def main(
     run_flag: str
@@ -37,6 +38,10 @@ def main(
             for output_feature in config["PREDICTED_FEATURES_LIST"]:
 
                 plot_benchmark_grid(results_path, output_feature)
+
+        case "figures":
+
+            generate_figures(config)
 
 if __name__ == "__main__":
 

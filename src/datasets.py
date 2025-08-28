@@ -449,6 +449,18 @@ def add_spoof_train_dataset(dataset_dicts, training_sequences_path, predicted_fe
 
     return dataset_dicts
 
+def add_spoof_train_dataset_no_save(sequences, predicted_features_list):
+
+    dataset_dicts = []
+    dataset_dicts.append({
+        "dataset_name": "spoof_training_dataset",
+        "dataset": make_spoof_train_dataset(sequences, predicted_features_list),
+        "label": "spoof_training_dataset",
+        "unique_key": "spoof_training_dataset"
+        })
+
+    return dataset_dicts
+
 def make_spoof_train_dataset(
     train_sequence_list: list[str],
     predicted_features: list[str]
