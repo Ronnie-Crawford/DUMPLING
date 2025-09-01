@@ -49,7 +49,7 @@ megascale["class_b"] = np.nan
 megascale.loc[megascale["scope"].notnull(), "class_a"] = megascale.loc[megascale["scope"].notnull(), "scope"].isin(["a", "c", "d"]).astype(int)
 megascale.loc[megascale["scope"].notnull(), "class_b"] = megascale.loc[megascale["scope"].notnull(), "scope"].isin(["b", "c", "d"]).astype(int)
 # Save cleaned data
-megascale.to_csv("data/clean_data/megascale.csv")
+megascale.to_csv("data/clean_data/megascale.csv", index_label = "index")
 
 
 # --- Domainome ---
@@ -65,7 +65,7 @@ domainome["is_deletion"] = False
 # Normalise column names
 domainome = domainome.rename(columns = {"domain_ID": "domain_name", "fitness": "old_fitness", "normalized_fitness": "fitness"})[["domain_name", "aa_seq", "is_wt", "fitness", "is_substitution", "is_insertion", "is_deletion", "reliability"]]
 # Save cleaned data
-domainome.to_csv("data/clean_data/domainome.csv")
+domainome.to_csv("data/clean_data/domainome.csv", index_label = "index")
 
 # --- Small indels ---
 # Read in data
@@ -80,7 +80,7 @@ small_indels["is_deletion"] = np.where(small_indels["mut_type"] == "deletions", 
 # Normalise column names
 small_indels = small_indels.rename(columns = {"domain": "domain_name", "scaled_fitness": "fitness"})[["domain_name", "aa_seq", "is_wt", "fitness", "is_substitution", "is_insertion", "is_deletion", "reliability"]]
 # Save cleaned data
-small_indels.to_csv("data/clean_data/small_indels.csv")
+small_indels.to_csv("data/clean_data/small_indels.csv", index_label = "index")
 
 # --- New indels ---
 new_indels = pd.read_csv("data/raw_data/aPCA_new_indels_normalised_2.csv")
@@ -94,14 +94,14 @@ new_indels["is_insertion"] = np.where(new_indels["mutation_type"] == "ins", True
 new_indels["is_deletion"] = np.where(new_indels["mutation_type"] == "del", True, False)
 # Normalise column names
 new_indels = new_indels.rename(columns = {"ID": "domain_name", "fitness": "absolute_fitness", "scaled_fitness": "fitness"})[["domain_name", "aa_seq", "is_wt", "fitness", "is_substitution", "is_insertion", "is_deletion", "reliability"]]
-new_indels.to_csv("data/clean_data/new_indels.csv")
+new_indels.to_csv("data/clean_data/new_indels.csv", index_label = "index")
 
 # --- Combined aPCA data ---
 # Join the datasets
 prenew_combined_apca = pd.concat([domainome, small_indels], axis = 0)
 postnew_combined_apca = pd.concat([domainome, small_indels, new_indels], axis = 0)
-prenew_combined_apca.to_csv("data/clean_data/prenew_apca.csv")
-postnew_combined_apca.to_csv("data/clean_data/postnew_apca.csv")
+prenew_combined_apca.to_csv("data/clean_data/prenew_apca.csv", index_label = "index")
+postnew_combined_apca.to_csv("data/clean_data/postnew_apca.csv", index_label = "index")
 
 # --- Clinvar ---
 # Gather the mutants from separate files:
@@ -166,4 +166,4 @@ clinvar_indels = pd.concat(clinvar_indels_dfs, ignore_index = True)
 clinvar_indels = clinvar_indels.rename(columns = {"mutated_sequence": "aa_seq", "protein": "uniprot_name", "DMS_bin_score": "ClinicalSignificance"})
 clinvar = pd.concat([clinvar_subs, clinvar_indels], ignore_index = True)
 
-clinvar.to_csv("data/clean_data/clinvar.csv")
+clinvar.to_csv("data/clean_data/clinvar.csv", index_label = "index")
